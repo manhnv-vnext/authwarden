@@ -1,13 +1,21 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import path from 'path';
 
+/**
+ * Shell-free Git inspection using execFileSync to prevent command injection.
+ */
 export function getGitChangedFiles(repoDir, { stagedOnly = false } = {}) {
   try {
-    const cmd = stagedOnly 
-      ? 'git diff --cached --name-only --diff-filter=ACM' 
-      : 'git status --porcelain -uall';
+    const args = stagedOnly 
+      ? ['diff', '--cached', '--name-only', '--diff-filter=ACM'] 
+      : ['status', '--porcelain', '-uall'];
     
-    const output = execSync(cmd, { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const output = execFileSync('git', args, { 
+      cwd: repoDir, 
+      encoding: 'utf8', 
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000
+    });
     const lines = output.trim().split('\n').filter(Boolean);
 
     if (stagedOnly) {
