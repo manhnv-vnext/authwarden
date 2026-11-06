@@ -1,0 +1,49 @@
+{
+  "name": "authwarden",
+  "version": "1.0.0",
+  "description": "Lightning-fast Static API & Authorization Vulnerability Scanner for Modern Web & Cloud",
+  "main": "src/index.js",
+  "type": "module",
+  "bin": {
+    "authwarden": "./bin/authwarden.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/manhnv-vnext/authwarden.git"
+  },
+  "bugs": {
+    "url": "https://github.com/manhnv-vnext/authwarden/issues"
+  },
+  "homepage": "https://github.com/manhnv-vnext/authwarden#readme",
+  "scripts": {
+    "start": "node bin/authwarden.js",
+    "scan": "node bin/authwarden.js scan .",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "security",
+    "security-tools",
+    "scanner",
+    "sast",
+    "api-security",
+    "authorization",
+    "idor",
+    "bola",
+    "bfla",
+    "shadow-api",
+    "nextjs",
+    "fastapi",
+    "secrets",
+    "mcp",
+    "ai-agent",
+    "iac",
+    "devsecops"
+  ],
+  "author": "manhnv-vnext",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

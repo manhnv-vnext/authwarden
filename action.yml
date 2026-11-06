@@ -1,0 +1,32 @@
+name: 'AuthWarden Security Scanner'
+description: 'Lightning-fast Static API & Authorization Vulnerability Scanner for Modern Web & Cloud'
+author: 'AuthWarden Contributors'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  path:
+    description: 'Path to scan'
+    required: false
+    default: '.'
+  fail-on:
+    description: 'Threshold severity to fail action (critical, high, medium, low)'
+    required: false
+    default: 'high'
+  verify:
+    description: 'Whether to safely verify detected secrets against live APIs'
+    required: false
+    default: 'false'
+  format:
+    description: 'Output format (terminal, sarif, markdown, json)'
+    required: false
+    default: 'terminal'
+  output:
+    description: 'File path to write report'
+    required: false
+    default: ''
+
+runs:
+  using: 'node20'
+  main: 'bin/authwarden.js'
