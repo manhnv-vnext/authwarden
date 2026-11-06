@@ -27,7 +27,7 @@
 
 <br/>
 
-<img src="assets/terminal-demo.svg" alt="AuthWarden Terminal Demo" width="920" />
+<img src="assets/terminal-demo.svg" alt="AuthWarden Terminal Demo" width="100%" style="max-width: 940px;" />
 
 </div>
 
