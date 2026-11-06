@@ -23,7 +23,7 @@
 
 <br/>
 
-[⚡ Quickstart](#-quickstart) • [🎯 Why AuthWarden?](#-why-authwarden) • [✨ Key Capabilities](#-key-capabilities) • [📊 Comparison](#-comparison-with-existing-tools) • [🛠️ CI/CD & Pre-commit](#-cicd-and-pre-commit) • [📜 Rule Catalog](#-rule-catalog) • [📈 Star History](#-star-history)
+[⚡ Quickstart](#-quickstart) • [🎯 Why AuthWarden?](#-why-authwarden) • [✨ Key Capabilities](#-key-capabilities) • [📊 Comparison](#-comparison-with-existing-tools) • [🛠️ CI/CD & Pre-commit](#cicd) • [📜 Rule Catalog](#-rule-catalog) • [📈 Star History](#-star-history)
 
 <br/>
 
@@ -178,42 +178,43 @@ Audits `Dockerfile`, `docker-compose.yml`, `*.tf`, and Kubernetes manifests for 
 
 ---
 
-## 🛠️ CI/CD and Pre-commit
+<a id="cicd"></a>
+## 🛠️ CI/CD Pipelines & Pre-commit Quality Gates
 
-### 1. Install Pre-commit Git Hook (1 Second)
+AuthWarden is engineered from the ground up for seamless, zero-friction CI/CD pipeline integration. With zero dependencies and sub-second execution, it runs natively on every push or pull request without slowing down your engineering velocity.
 
-Block unauthorized endpoints and exposed secrets from ever reaching remote branches:
+### 1. ⚡ GitHub Actions (Native Code Scanning & SARIF)
 
-```bash
-npx github:manhnv-vnext/authwarden init-hook
-```
+Upload vulnerability findings directly to GitHub's native **Security tab (Code Scanning alerts)** with automated line-level PR annotations:
 
-This creates an executable `.git/hooks/pre-commit` that validates staged changes before commit.
-
-### 2. GitHub Actions Integration
-
-Create `.github/workflows/security.yml` to automatically upload findings to GitHub's native Security Code Scanning tab:
+Create `.github/workflows/security.yml`:
 
 ```yaml
-name: Security Audit
-on: [push, pull_request]
+name: AuthWarden Security Scan
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
 
 jobs:
-  audit:
+  authwarden-audit:
+    name: Security & Authorization Audit
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Run AuthWarden Scan
+      - name: Run AuthWarden Scanner (SARIF Export)
         run: npx github:manhnv-vnext/authwarden scan . --fail-on high --format sarif --output results.sarif
 
       - name: Upload SARIF to GitHub Security Tab
@@ -222,6 +223,43 @@ jobs:
         with:
           sarif_file: results.sarif
 ```
+
+### 2. 🦊 GitLab CI/CD Pipeline
+
+Add AuthWarden as a security gate in your `.gitlab-ci.yml`:
+
+```yaml
+stages:
+  - test
+  - security
+
+authwarden_scan:
+  stage: security
+  image: node:20-alpine
+  script:
+    - npx github:manhnv-vnext/authwarden scan . --fail-on high
+  allow_failure: false
+```
+
+### 3. 🪝 Instant Pre-commit Git Hook (1 Second)
+
+Block broken authorization routes and exposed secrets from ever reaching remote branches:
+
+```bash
+npx github:manhnv-vnext/authwarden init-hook
+```
+
+This creates an executable `.git/hooks/pre-commit` hook that automatically validates staged changes before any commit is finalized.
+
+### 4. 🛑 CI Quality Gate Flags
+
+Fine-tune your build pipeline failure thresholds:
+- `--fail-on critical`: Exit code `1` only if Critical findings (active secrets, RCE, severe IDOR) are found.
+- `--fail-on high` (Default): Exit code `1` on High or Critical findings.
+- `--fail-on medium`: Strict compliance mode for zero warnings.
+- `--format sarif`: Generates standard OASIS SARIF v2.1.0 output for GitHub/GitLab Code Quality tabs.
+- `--format json`: Machine-readable JSON output for custom security dashboards.
+- `--format markdown`: Clean markdown table suitable for posting directly as a Pull Request comment.
 
 ---
 
