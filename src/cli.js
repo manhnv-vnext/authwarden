@@ -188,10 +188,29 @@ ${colors.bold('CONTAINER & CLOUD IAC:')}
   • ${colors.red('IAC-010')}   Secret Baked into Dockerfile ENV Instruction
   • ${colors.blue('IAC-011')}   Unencrypted Storage Volume / Database in Terraform
 
+${colors.bold('BUSINESS LOGIC & WORKFLOWS:')}
+  • ${colors.yellow('LOGIC-001')} Multi-Step Workflow / Payment Status Evasion via Client Payload
+  • ${colors.yellow('LOGIC-002')} Potential TOCTOU Race Condition on Balance / Coupon State
+  • ${colors.yellow('LOGIC-003')} Unchecked Numeric Input: Negative Price / Quantity Tampering
+  • ${colors.yellow('LOGIC-004')} Insecure JWT Verification: Missing Algorithm Whitelist
+  • ${colors.blue('LOGIC-005')}   Client-Only Logout: Missing Server-Side Session Revocation
+
+${colors.bold('OPENAPI & API SPEC CONTRACTS:')}
+  • ${colors.yellow('SPEC-001')}  Unprotected Sensitive Operation in API Spec
+  • ${colors.yellow('SPEC-002')}  Explicit Public Security Override (security: []) on Restricted Route
+  • ${colors.yellow('SPEC-003')}  Sensitive Credential Passed via URL Query Parameter
+  • ${colors.blue('SPEC-004')}    Insecure Cleartext Transport (HTTP) in Server URL
+
 ${colors.bold('AI AGENT & MCP TOOLS:')}
   • ${colors.red('MCP-001')}   Unsandboxed Shell Execution Tool in MCP Config
   • ${colors.yellow('MCP-002')}   Unrestricted Root Filesystem Path in MCP Server
   • ${colors.blue('MCP-004')}   Prompt Injection Concatenation in System Instructions
+
+${colors.bold('SCA & KNOWN CVE VULNERABILITIES:')}
+  • ${colors.red('CVE-xxxx')}  Known High/Critical Vulnerabilities in Dependencies (npm, PyPI, Go, Composer)
+  • ${colors.bold('Reachability')} AST-guided Reachability Analysis (Flags Imported vs Dormant Vulnerabilities)
+  • ${colors.yellow('SUP-001')}   Lifecycle Script Exfiltration Risk in package.json
+  • ${colors.blue('SUP-002')}   Unpinned Git Repository Dependency
 `);
   return 0;
 }

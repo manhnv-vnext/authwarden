@@ -7,6 +7,9 @@ import { scanIaC } from './engines/iacScanner.js';
 import { scanSupplyChain } from './engines/supplyChainScanner.js';
 import { scanMcpAgent } from './engines/mcpAgentScanner.js';
 import { scanSAST } from './engines/sastScanner.js';
+import { scanCVEs } from './engines/cveScanner.js';
+import { scanBusinessLogic } from './engines/businessLogicScanner.js';
+import { scanApiSpecs } from './engines/apiSpecScanner.js';
 import { verifySecret } from './verifier/secretVerifier.js';
 
 export async function runScan(targetPath = '.', options = {}) {
@@ -15,7 +18,7 @@ export async function runScan(targetPath = '.', options = {}) {
   
   const files = walkDirectory(rootDir, options);
 
-  // Framework detection
+  // Framework & ecosystem detection
   const frameworks = new Set();
   for (const f of files) {
     if (f.relative.includes('app/api') || f.name === 'next.config.js' || f.name === 'next.config.mjs') {
@@ -35,6 +38,21 @@ export async function runScan(targetPath = '.', options = {}) {
     }
     if (f.name === 'k8s.yaml' || f.name === 'deployment.yaml' || f.relative.includes('k8s/')) {
       frameworks.add('Kubernetes');
+    }
+    if (f.name === 'package.json') {
+      frameworks.add('npm/Node.js');
+    }
+    if (f.name === 'requirements.txt') {
+      frameworks.add('Python/pip');
+    }
+    if (f.name === 'go.mod') {
+      frameworks.add('Go Modules');
+    }
+    if (f.name === 'composer.json') {
+      frameworks.add('Composer/PHP');
+    }
+    if (/(?:openapi|swagger|api-docs)[^/]*\.(?:json|ya?ml)$/i.test(f.name)) {
+      frameworks.add('OpenAPI / Swagger');
     }
   }
 
@@ -68,6 +86,20 @@ export async function runScan(targetPath = '.', options = {}) {
     // 6. MCP & AI Agent Scanner
     const mcpFindings = scanMcpAgent(file);
     allFindings.push(...mcpFindings);
+
+    // 7. CVE & Software Composition Analysis (SCA) Scanner
+    if (['package.json', 'requirements.txt', 'go.mod', 'composer.json'].includes(file.name.toLowerCase())) {
+      const cveFindings = await scanCVEs(file, files, options);
+      allFindings.push(...cveFindings);
+    }
+
+    // 8. Business Logic & Authorization Integrity Scanner
+    const logicFindings = await scanBusinessLogic(file, files, options);
+    allFindings.push(...logicFindings);
+
+    // 9. OpenAPI & API Specification Auditor
+    const specFindings = await scanApiSpecs(file, files, options);
+    allFindings.push(...specFindings);
   }
 
   // Active Verification (if enabled)

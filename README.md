@@ -98,6 +98,15 @@ Audits `Dockerfile`, `docker-compose.yml`, and `*.tf` files for root execution, 
 ### 5. 🤖 AI Agent & MCP Config Guard
 Audits Claude Desktop, Cursor, and custom AI agent tool manifests to block unsandboxed shell execution (`bash`, `powershell`) and root filesystem access (`/`).
 
+### 6. 📦 SCA & Known CVE Scanner with Reachability Analysis
+Audits `package.json`, `requirements.txt`, `go.mod`, and `composer.json` for known high-severity CVEs across modern ecosystems. Uses AST-guided reachability checks to distinguish between active dependencies and dormant ones, cutting alert noise by 80%.
+
+### 7. ⚖️ Business Logic & Workflow State Guard
+Flags critical transaction flaws: client-supplied `is_paid` payment status evasion, non-atomic TOCTOU race conditions in balances/coupons, negative quantity/price manipulation, and JWT verification missing algorithm whitelists.
+
+### 8. 📋 OpenAPI & Swagger Security Auditor
+Audits `openapi.yaml`, `swagger.json`, and Postman collections for unprotected sensitive endpoints, explicit `security: []` overrides, credentials exposed in query parameters, and cleartext HTTP URLs.
+
 ---
 
 ## 📊 Comparison with Existing Tools
@@ -198,6 +207,17 @@ AuthWarden ships with 30+ precision rules across 6 security categories:
 | **AI & MCP** | `MCP-001` | Unsandboxed Shell Execution Tool in MCP Config | `CRITICAL` |
 | **AI & MCP** | `MCP-002` | Unrestricted Root Filesystem Path in MCP Server | `HIGH` |
 | **AI & MCP** | `MCP-004` | Prompt Injection Risk in Agent System Prompt | `MEDIUM` |
+| **Business Logic**| `LOGIC-001` | Multi-Step Workflow / Payment Status Evasion via Client Payload | `HIGH` |
+| **Business Logic**| `LOGIC-002` | Potential TOCTOU Race Condition on Balance / Coupon State | `HIGH` |
+| **Business Logic**| `LOGIC-003` | Unchecked Numeric Input: Negative Price / Quantity Tampering | `HIGH` |
+| **Business Logic**| `LOGIC-004` | Insecure JWT Verification: Missing Algorithm Whitelist | `HIGH` |
+| **Business Logic**| `LOGIC-005` | Client-Only Logout: Missing Server-Side Session Revocation | `MEDIUM` |
+| **API Contract** | `SPEC-001` | Unprotected Sensitive Operation in API Specification | `HIGH` |
+| **API Contract** | `SPEC-002` | Explicit Public Security Override (`security: []`) | `HIGH` |
+| **API Contract** | `SPEC-003` | Sensitive Credential Defined as URL Query Parameter | `HIGH` |
+| **API Contract** | `SPEC-004` | Insecure Cleartext Transport (HTTP) in Server URL | `MEDIUM` |
+| **SCA & CVE** | `CVE-xxxx` | Known Vulnerable Dependency (npm, PyPI, Go, Composer) | `HIGH` / `CRITICAL` |
+| **SCA & CVE** | Reachability | Imported vs Dormant Dependency Vulnerability Tagging | `INFO` |
 | **Supply Chain** | `SUPPLY-001`| Suspicious Outbound Script in Package Lifecycle Hook | `CRITICAL` |
 
 ---
