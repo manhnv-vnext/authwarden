@@ -1,15 +1,16 @@
 {
-  "name": "authwarden",
+  "name": "authwarden-cli",
   "version": "1.0.0",
   "description": "Lightning-fast Static API & Authorization Vulnerability Scanner for Modern Web & Cloud",
   "main": "src/index.js",
   "type": "module",
   "bin": {
-    "authwarden": "./bin/authwarden.js"
+    "authwarden": "bin/authwarden.js",
+    "authwarden-cli": "bin/authwarden.js"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/manhnv-vnext/authwarden.git"
+    "url": "git+https://github.com/manhnv-vnext/authwarden.git"
   },
   "bugs": {
     "url": "https://github.com/manhnv-vnext/authwarden/issues"

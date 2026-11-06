@@ -5,7 +5,7 @@
 <br/>
 <br/>
 
-[![npm version](https://img.shields.io/badge/npm-v1.0.0-blue.svg?style=flat-square)](https://www.npmjs.com/)
+[![npm version](https://img.shields.io/npm/v/authwarden-cli.svg?style=flat-square)](https://www.npmjs.com/package/authwarden-cli)
 [![License](https://img.shields.io/badge/license-Apache%202.0-emerald.svg?style=flat-square)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-success.svg?style=flat-square)](package.json)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
@@ -32,19 +32,21 @@ No configuration required. Run directly in your repository root with `npx`:
 
 ```bash
 # Run instant scan
-npx authwarden scan .
+npx authwarden-cli scan .
 
 # Run scan with safe live secret verification
-npx authwarden scan . --verify
+npx authwarden-cli scan . --verify
 
 # Export SARIF for GitHub Code Scanning
-npx authwarden scan . --format sarif --output results.sarif
+npx authwarden-cli scan . --format sarif --output results.sarif
 ```
 
 ### Global Installation (Optional)
 
 ```bash
-npm install -g authwarden
+npm install -g authwarden-cli
+# After installing globally, you can invoke directly:
+authwarden scan .
 ```
 
 ---
