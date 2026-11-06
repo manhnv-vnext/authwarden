@@ -31,21 +31,22 @@
 No configuration required. Run directly in your repository root with `npx`:
 
 ```bash
-# Run instant scan
-npx authwarden-cli scan .
+# Instant scan via GitHub (Zero install required):
+npx github:manhnv-vnext/authwarden scan .
 
-# Run scan with safe live secret verification
-npx authwarden-cli scan . --verify
+# With safe active live secret verification:
+npx github:manhnv-vnext/authwarden scan . --verify
 
-# Export SARIF for GitHub Code Scanning
-npx authwarden-cli scan . --format sarif --output results.sarif
+# Export SARIF for GitHub Code Scanning:
+npx github:manhnv-vnext/authwarden scan . --format sarif --output results.sarif
 ```
 
-### Global Installation (Optional)
+### Global Installation
 
 ```bash
-npm install -g authwarden-cli
-# After installing globally, you can invoke directly:
+npm install -g manhnv-vnext/authwarden
+
+# Then run anywhere:
 authwarden scan .
 ```
 
