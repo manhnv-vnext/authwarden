@@ -6,6 +6,7 @@ import { scanSecrets } from './engines/secretScanner.js';
 import { scanIaC } from './engines/iacScanner.js';
 import { scanSupplyChain } from './engines/supplyChainScanner.js';
 import { scanMcpAgent } from './engines/mcpAgentScanner.js';
+import { scanSAST } from './engines/sastScanner.js';
 import { verifySecret } from './verifier/secretVerifier.js';
 
 export async function runScan(targetPath = '.', options = {}) {
@@ -32,6 +33,9 @@ export async function runScan(targetPath = '.', options = {}) {
     if (f.name.includes('mcp') || f.name.includes('claude')) {
       frameworks.add('AI Agent / MCP');
     }
+    if (f.name === 'k8s.yaml' || f.name === 'deployment.yaml' || f.relative.includes('k8s/')) {
+      frameworks.add('Kubernetes');
+    }
   }
 
   const allFindings = [];
@@ -47,15 +51,21 @@ export async function runScan(targetPath = '.', options = {}) {
     const secretFindings = scanSecrets(file);
     allFindings.push(...secretFindings);
 
-    // 3. IaC Scanner
+    // 3. SAST & Intra-file Taint-Lite Scanner
+    if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.php', '.go', '.java'].includes(file.ext)) {
+      const sastFindings = scanSAST(file);
+      allFindings.push(...sastFindings);
+    }
+
+    // 4. IaC Scanner
     const iacFindings = scanIaC(file);
     allFindings.push(...iacFindings);
 
-    // 4. Supply Chain Scanner
+    // 5. Supply Chain Scanner
     const supplyFindings = scanSupplyChain(file);
     allFindings.push(...supplyFindings);
 
-    // 5. MCP & AI Agent Scanner
+    // 6. MCP & AI Agent Scanner
     const mcpFindings = scanMcpAgent(file);
     allFindings.push(...mcpFindings);
   }

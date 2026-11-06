@@ -2,6 +2,7 @@ import fs from 'fs';
 
 /**
  * Infrastructure as Code (IaC) & Container Security Scanner
+ * Audits Dockerfiles, Docker Compose, Kubernetes manifests, and Terraform files.
  */
 
 export function scanIaC(file) {
@@ -29,7 +30,7 @@ export function scanIaC(file) {
         hasUser = true;
       }
 
-      // Curl pipe to bash
+      // Insecure curl pipe
       if (/curl\s+[^|]+\|\s*(?:ba)?sh/i.test(line) || /wget\s+[^|]+\|\s*(?:ba)?sh/i.test(line)) {
         findings.push({
           ruleId: 'IAC-002',
@@ -40,6 +41,20 @@ export function scanIaC(file) {
           snippet: line,
           description: 'Executing unverified remote scripts via curl/wget piped directly to bash exposes the container build to man-in-the-middle attacks.',
           remediation: 'Download the script first, verify its SHA256 checksum, then execute it.'
+        });
+      }
+
+      // Hardcoded Secret in ENV
+      if (/^[ \t]*ENV[ \t]+.*(?:SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY)[ \t]*=/i.test(line)) {
+        findings.push({
+          ruleId: 'IAC-010',
+          severity: 'CRITICAL',
+          title: 'Secret Baked into Dockerfile ENV Instruction',
+          file: relPath,
+          line: i + 1,
+          snippet: line,
+          description: 'Values set with `ENV` are permanently baked into the image metadata and readable by anyone who inspects the container image.',
+          remediation: 'Use Docker BuildKit secret mounts (`RUN --mount=type=secret`) or supply secrets at runtime via environment variables.'
         });
       }
 
@@ -78,8 +93,10 @@ export function scanIaC(file) {
     }
   }
 
-  // 2. Docker Compose Analysis
-  if (fileName.includes('docker-compose') && (file.ext === '.yml' || file.ext === '.yaml')) {
+  // 2. Docker Compose & Kubernetes Manifests (*.yml, *.yaml)
+  if (file.ext === '.yml' || file.ext === '.yaml') {
+    const isK8s = content.includes('apiVersion:') && content.includes('kind:');
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
@@ -102,12 +119,40 @@ export function scanIaC(file) {
         findings.push({
           ruleId: 'IAC-005',
           severity: 'HIGH',
-          title: 'Privileged Mode Enabled in Docker Compose',
+          title: 'Privileged Mode Enabled in Container Manifest',
           file: relPath,
           line: i + 1,
           snippet: line.trim(),
-          description: 'Privileged containers disable all Linux security capabilities and seccomp filters.',
-          remediation: 'Remove privileged: true and only grant specific Linux capabilities (e.g. cap_add).'
+          description: 'Privileged containers disable all Linux security capabilities and seccomp filters, allowing root escape.',
+          remediation: 'Set `securityContext.privileged: false` and explicitly grant only required Linux capabilities.'
+        });
+      }
+
+      // Kubernetes Host Network / Host PID
+      if (isK8s && (/\bhostNetwork:\s*true/i.test(line) || /\bhostPID:\s*true/i.test(line))) {
+        findings.push({
+          ruleId: 'IAC-008',
+          severity: 'HIGH',
+          title: 'Kubernetes Pod Configured with Host Network or Host PID',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'Setting hostNetwork or hostPID breaks pod isolation and allows network packet sniffing or process inspection on the host node.',
+          remediation: 'Disable hostNetwork and hostPID unless absolutely required for low-level node daemons.'
+        });
+      }
+
+      // Kubernetes Privilege Escalation
+      if (isK8s && /\ballowPrivilegeEscalation:\s*true/i.test(line)) {
+        findings.push({
+          ruleId: 'IAC-009',
+          severity: 'HIGH',
+          title: 'Kubernetes Container Allows Privilege Escalation',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'Allowing privilege escalation permits child processes to gain more privileges than their parent process (e.g. via setuid binaries).',
+          remediation: 'Set `securityContext.allowPrivilegeEscalation: false`.'
         });
       }
     }
@@ -117,7 +162,7 @@ export function scanIaC(file) {
   if (file.ext === '.tf') {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (/acl\s*=\s*["']public-read["']/i.test(line)) {
+      if (/acl\s*=\s*["']public-read["']/i.test(line) || /allow_public_access\s*=\s*true/i.test(line)) {
         findings.push({
           ruleId: 'IAC-006',
           severity: 'CRITICAL',
@@ -139,6 +184,18 @@ export function scanIaC(file) {
           snippet: line.trim(),
           description: 'Security group rule allows ingress from 0.0.0.0/0 on sensitive ports (SSH/RDP/DB), inviting automated brute-force attacks.',
           remediation: 'Restrict ingress cidr_blocks to specific internal VPC or corporate VPN CIDR blocks.'
+        });
+      }
+      if (/encrypted\s*=\s*false/i.test(line)) {
+        findings.push({
+          ruleId: 'IAC-011',
+          severity: 'MEDIUM',
+          title: 'Unencrypted Storage Volume / Database in Terraform',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'Storage resource (EBS volume, RDS instance) explicitly disables encryption at rest.',
+          remediation: 'Set `encrypted = true` and specify a KMS key ID.'
         });
       }
     }

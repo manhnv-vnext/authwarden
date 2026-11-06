@@ -159,7 +159,7 @@ jobs:
 
 ## 📜 Rule Catalog
 
-AuthWarden ships with out-of-the-box precision rules:
+AuthWarden ships with 30+ precision rules across 6 security categories:
 
 | Category | Rule ID | Title | Default Severity |
 |:---|:---|:---|:---:|
@@ -168,19 +168,37 @@ AuthWarden ships with out-of-the-box precision rules:
 | **API & Auth** | `AUTH-003` | Potential BOLA / IDOR Unscoped Object Query | `HIGH` |
 | **API & Auth** | `AUTH-004` | Server Action Missing Identity Check | `HIGH` |
 | **API & Auth** | `AUTH-005` | Mass Assignment in Request Body Handling | `MEDIUM` |
+| **API & Auth** | `AUTH-006` | Unthrottled Auth Endpoint (Brute-Force Risk) | `HIGH` |
+| **API & Auth** | `AUTH-007` | Sensitive Data Exposure (Password Hash in Response) | `HIGH` |
+| **SAST & Taint** | `TAINT-001` | Taint Flow: Request Input Reaches Command Execution (RCE) | `CRITICAL` |
+| **SAST & Taint** | `TAINT-002` | Taint Flow: Request Input Reaches Raw SQL Query | `CRITICAL` |
+| **SAST & Taint** | `TAINT-003` | Taint Flow: Request Input Reaches File System Read | `HIGH` |
+| **SAST & Taint** | `TAINT-004` | Taint Flow: Request Input Reaches Outbound HTTP Call (SSRF) | `HIGH` |
+| **SAST & Taint** | `SAST-001` | SQL Injection: Dynamic Query Construction with User Input | `CRITICAL` |
+| **SAST & Taint** | `SAST-002` | Command Injection: Untrusted Input in System Shell Call | `CRITICAL` |
+| **SAST & Taint** | `SAST-003` | Dangerous Dynamic Code Execution via `eval()` | `CRITICAL` |
+| **SAST & Taint** | `SAST-006` | Cross-Site Scripting (XSS): `dangerouslySetInnerHTML` / DOM | `HIGH` |
+| **SAST & Taint** | `SAST-007` | Insecure Deserialization (`pickle` / unsafe `yaml`) | `CRITICAL` |
+| **SAST & Taint** | `SAST-008` | Disabled TLS Certificate Verification | `HIGH` |
+| **SAST & Taint** | `SAST-011` | Open Redirect: Unvalidated URL in Redirect Call | `MEDIUM` |
 | **Secrets** | `SEC-001` | AWS Access Key ID Exposure | `CRITICAL` |
 | **Secrets** | `SEC-002` | GitHub Personal Access Token Exposure | `CRITICAL` |
 | **Secrets** | `SEC-003` | OpenAI API Secret Key Exposure | `CRITICAL` |
 | **Secrets** | `SEC-004` | Stripe Live Secret Key Exposure | `CRITICAL` |
 | **Secrets** | `SEC-007` | Database Connection URI with Plaintext Password | `CRITICAL` |
-| **IaC & Docker** | `IAC-001` | Container Default Execution as Root | `MEDIUM` |
-| **IaC & Docker** | `IAC-002` | Insecure Remote Script Pipe (`curl \| sh`) | `HIGH` |
-| **IaC & Docker** | `IAC-003` | Exposed Database Port in Container Manifest | `HIGH` |
-| **IaC & Docker** | `IAC-004` | Docker Daemon Socket Mounted in Container | `CRITICAL` |
-| **IaC & Docker** | `IAC-006` | Public S3 Bucket Configuration in Terraform | `CRITICAL` |
+| **IaC & Cloud** | `IAC-001` | Container Default Execution as Root | `MEDIUM` |
+| **IaC & Cloud** | `IAC-002` | Insecure Remote Script Pipe (`curl \| sh`) | `HIGH` |
+| **IaC & Cloud** | `IAC-003` | Exposed Database Port in Container Manifest | `HIGH` |
+| **IaC & Cloud** | `IAC-004` | Docker Daemon Socket Mounted in Container | `CRITICAL` |
+| **IaC & Cloud** | `IAC-006` | Public S3 Bucket Configuration in Terraform | `CRITICAL` |
+| **IaC & Cloud** | `IAC-007` | Sensitive Port Open to `0.0.0.0/0` in Security Group | `CRITICAL` |
+| **IaC & Cloud** | `IAC-008` | Kubernetes Pod Configured with Host Network or Host PID | `HIGH` |
+| **IaC & Cloud** | `IAC-009` | Kubernetes Container Allows Privilege Escalation | `HIGH` |
+| **IaC & Cloud** | `IAC-010` | Secret Baked into Dockerfile `ENV` Instruction | `CRITICAL` |
 | **AI & MCP** | `MCP-001` | Unsandboxed Shell Execution Tool in MCP Config | `CRITICAL` |
 | **AI & MCP** | `MCP-002` | Unrestricted Root Filesystem Path in MCP Server | `HIGH` |
 | **AI & MCP** | `MCP-004` | Prompt Injection Risk in Agent System Prompt | `MEDIUM` |
+| **Supply Chain** | `SUPPLY-001`| Suspicious Outbound Script in Package Lifecycle Hook | `CRITICAL` |
 
 ---
 

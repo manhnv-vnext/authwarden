@@ -53,6 +53,9 @@ export function printTerminalReport(scanResult) {
     if (finding.snippet) {
       console.log(`   ${colors.gray('Snippet:')}  ${colors.red(finding.snippet)}`);
     }
+    if (finding.dataFlow) {
+      console.log(`   ${colors.yellow('Data Flow:')} Line ${finding.dataFlow.sourceLine} [${colors.gray(finding.dataFlow.sourceCode)}] ${colors.cyan('➔')} Line ${finding.dataFlow.sinkLine} [${colors.red(finding.dataFlow.sinkCode)}]`);
+    }
     if (finding.description) {
       console.log(`   ${colors.gray('Detail:')}   ${finding.description}`);
     }

@@ -3,7 +3,8 @@ import path from 'path';
 
 /**
  * API & Authorization Scanner
- * Detects Shadow APIs, Missing Auth, BOLA / IDOR, and Insecure Server Actions.
+ * Detects Shadow APIs, Missing Auth, BOLA / IDOR, Insecure Server Actions,
+ * Unthrottled Auth Endpoints, and Sensitive Data Exposure.
  */
 
 const ADMIN_ROUTE_PATTERNS = [
@@ -35,9 +36,29 @@ const AUTH_MIDDLEWARE_SIGNALS = [
   /security/i
 ];
 
+const RATE_LIMIT_SIGNALS = [
+  /ratelimit/i,
+  /limiter/i,
+  /throttle/i,
+  /slowdown/i,
+  /quota/i,
+  /bottleneck/i
+];
+
 export function scanApiAuth(file) {
   const findings = [];
-  const content = fs.readFileSync(file.path, 'utf8');
+  let content;
+  try {
+    content = fs.readFileSync(file.path, 'utf8');
+  } catch {
+    return findings;
+  }
+
+  // Skip test files for auth heuristics
+  if (file.relative.includes('test/') || file.relative.includes('tests/')) {
+    return findings;
+  }
+
   const lines = content.split('\n');
   const relPath = file.relative.replace(/\\/g, '/');
 
@@ -54,7 +75,6 @@ export function scanApiAuth(file) {
       const matchIndex = match.index;
       const lineNo = content.slice(0, matchIndex).split('\n').length;
       
-      // Analyze body of the handler (up to 40 lines)
       const handlerBody = lines.slice(lineNo - 1, lineNo + 40).join('\n');
       const hasAuth = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(handlerBody));
 
@@ -70,7 +90,6 @@ export function scanApiAuth(file) {
           remediation: `Add session or token validation at the beginning of the handler: const session = await auth(); if (!session?.user?.isAdmin) return new Response('Unauthorized', { status: 401 });`
         });
       } else if (!hasAuth && ['POST', 'PUT', 'DELETE'].includes(method)) {
-        // State changing method without any auth check
         if (!/login|register|signup|forgot|webhook|callback|health/i.test(routeUrl)) {
           findings.push({
             ruleId: 'AUTH-002',
@@ -126,6 +145,8 @@ export function scanApiAuth(file) {
 
       const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(routePath));
       const hasAuth = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(middlewareChain));
+      const isLoginOrAuth = /login|signin|auth\/token|password\/reset/i.test(routePath);
+      const hasRateLimit = RATE_LIMIT_SIGNALS.some(s => s.test(middlewareChain) || s.test(content));
 
       if (isAdmin && !hasAuth) {
         findings.push({
@@ -137,6 +158,19 @@ export function scanApiAuth(file) {
           snippet: lines[lineNo - 1]?.trim(),
           description: `Express endpoint "${routePath}" looks like an administrative API but lacks authentication middleware in its route definition chain.`,
           remediation: `Add your authentication middleware: router.${method.toLowerCase()}('${routePath}', requireAuth, requireRole('admin'), handler);`
+        });
+      }
+
+      if (isLoginOrAuth && !hasRateLimit && method === 'POST') {
+        findings.push({
+          ruleId: 'AUTH-006',
+          severity: 'HIGH',
+          title: `Unthrottled Authentication Endpoint: ${method} ${routePath}`,
+          file: relPath,
+          line: lineNo,
+          snippet: lines[lineNo - 1]?.trim(),
+          description: `Authentication endpoint "${routePath}" does not apply rate limiting, leaving it vulnerable to automated brute-force and credential stuffing attacks.`,
+          remediation: `Apply a rate limiter (e.g. express-rate-limit): router.post('${routePath}', authLimiter, handler);`
         });
       }
     }
@@ -170,13 +204,12 @@ export function scanApiAuth(file) {
     }
   }
 
-  // 5. BOLA / IDOR Pattern: Direct query by ID without user context filter
+  // 5. BOLA / IDOR Pattern & Sensitive Data Exposure
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     
-    // Pattern: findById(req.params.id) or findUnique({ where: { id } }) without owner check
+    // Pattern: findById(req.params.id) without owner check
     if (/(?:findById|findByPk|filter_by\(id=|\.filter\([a-zA-Z_]+\.id\s*==\s*id)\s*\(/i.test(line)) {
-      // Look in nearby lines for tenant or owner verification
       const contextBlock = lines.slice(Math.max(0, i - 10), Math.min(lines.length, i + 15)).join('\n');
       const hasOwnerCheck = /user_id|userId|tenant_id|tenantId|owner_id|ownerId|org_id|accountId|req\.user|current_user/i.test(contextBlock);
 
@@ -191,11 +224,11 @@ export function scanApiAuth(file) {
           description: 'Database query queries an object directly by identifier without validating ownership against the authenticated user/tenant session.',
           remediation: 'Scope the query to the authenticated user: db.item.findFirst({ where: { id, userId: req.user.id } })'
         });
-        break; // Only report once per file to avoid flooding
+        break;
       }
     }
 
-    // Pattern: Mass Assignment (req.body passed completely into create/update)
+    // Pattern: Mass Assignment
     if (/(?:\.create|\.update|\.insert)\s*\(\s*(?:req\.body|request\.body|params)\s*\)/i.test(line)) {
       findings.push({
         ruleId: 'AUTH-005',
@@ -206,6 +239,21 @@ export function scanApiAuth(file) {
         snippet: line.trim(),
         description: 'Entire request body is passed directly to database mutation. Attackers can inject privileged fields (e.g. role, isAdmin, balance).',
         remediation: 'Use a strict DTO or pick only allowed fields: const { name, bio } = req.body; await db.user.update({ data: { name, bio } });'
+      });
+      break;
+    }
+
+    // Pattern: Sensitive Data Exposure in API response
+    if (!line.includes('.test(') && /(?:res\.json|Response\.json)\s*\(?.*?(?:password_hash|passwordHash|hashed_password|salt|secret_key)\b/i.test(line)) {
+      findings.push({
+        ruleId: 'AUTH-007',
+        severity: 'HIGH',
+        title: 'Sensitive Data Exposure: Password Hash or Secret in Response',
+        file: relPath,
+        line: i + 1,
+        snippet: line.trim(),
+        description: 'Response payload appears to serialize sensitive user attributes such as password_hash or salt.',
+        remediation: 'Exclude password hashes and internal credentials before returning user models: delete user.password_hash or use a sanitized DTO.'
       });
       break;
     }

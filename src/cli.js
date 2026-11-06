@@ -146,6 +146,24 @@ ${colors.bold('API & AUTHORIZATION:')}
   • ${colors.yellow('AUTH-003')}  Potential BOLA / IDOR Unscoped Object Query
   • ${colors.yellow('AUTH-004')}  Server Action Missing Identity Check
   • ${colors.blue('AUTH-005')}  Mass Assignment in Body Handling
+  • ${colors.yellow('AUTH-006')}  Unthrottled Authentication Endpoint (Brute-Force Risk)
+  • ${colors.yellow('AUTH-007')}  Sensitive Data Exposure (Password Hash in Response)
+
+${colors.bold('SAST & INTRA-FILE TAINT-LITE:')}
+  • ${colors.red('SAST-001')}  SQL Injection: Dynamic Query Construction with User Input
+  • ${colors.red('SAST-002')}  Command Injection: Untrusted Input in System Shell Call
+  • ${colors.red('SAST-003')}  Dangerous Code Execution via eval() / new Function()
+  • ${colors.yellow('SAST-004')}  Server-Side Request Forgery (SSRF)
+  • ${colors.yellow('SAST-005')}  Path Traversal: Arbitrary File Read / Include
+  • ${colors.yellow('SAST-006')}  Cross-Site Scripting (XSS): dangerouslySetInnerHTML / DOM write
+  • ${colors.red('SAST-007')}  Insecure Deserialization (pickle / unsafe yaml)
+  • ${colors.yellow('SAST-008')}  Disabled TLS Certificate Verification
+  • ${colors.blue('SAST-009')}  Weak Cryptographic Hash (MD5 / SHA-1)
+  • ${colors.blue('SAST-011')}  Open Redirect: Unvalidated URL in Redirect Call
+  • ${colors.red('TAINT-001')} Taint Flow: Request Input Reaches Command Execution (RCE)
+  • ${colors.red('TAINT-002')} Taint Flow: Request Input Reaches Raw SQL Query
+  • ${colors.yellow('TAINT-003')} Taint Flow: Request Input Reaches File System Read
+  • ${colors.yellow('TAINT-004')} Taint Flow: Request Input Reaches Outbound HTTP Call (SSRF)
 
 ${colors.bold('SECRETS & TOKENS:')}
   • ${colors.red('SEC-001')}   AWS Access Key ID Exposure
@@ -165,6 +183,10 @@ ${colors.bold('CONTAINER & CLOUD IAC:')}
   • ${colors.yellow('IAC-005')}   Privileged Container Mode in Docker Compose
   • ${colors.red('IAC-006')}   Public S3 Bucket in Terraform
   • ${colors.red('IAC-007')}   Sensitive Port Open to 0.0.0.0/0 in Security Group
+  • ${colors.yellow('IAC-008')}   Kubernetes Pod with Host Network or Host PID
+  • ${colors.yellow('IAC-009')}   Kubernetes Container Allows Privilege Escalation
+  • ${colors.red('IAC-010')}   Secret Baked into Dockerfile ENV Instruction
+  • ${colors.blue('IAC-011')}   Unencrypted Storage Volume / Database in Terraform
 
 ${colors.bold('AI AGENT & MCP TOOLS:')}
   • ${colors.red('MCP-001')}   Unsandboxed Shell Execution Tool in MCP Config
