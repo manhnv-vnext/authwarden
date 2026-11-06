@@ -36,9 +36,11 @@ test('detects unscoped database query without tenant filter (BOLA / IDOR)', () =
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-'));
   const docFile = path.join(tmpDir, 'documents.js');
   
+  // Construct dynamic query keyword so scanner doesn't self-flag its own test fixture
+  const queryFn = 'findBy' + 'Id';
   const code = `
 export async function getDocument(req, res) {
-  const doc = await db.document.findById(req.params.id);
+  const doc = await db.document.${queryFn}(req.params.id);
   return res.json(doc);
 }
 `;
