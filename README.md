@@ -292,30 +292,42 @@ AuthWarden ships with 45+ precision rules across 8 security categories:
 | **SAST & Taint** | `SAST-001` | SQL Injection: Dynamic Query Construction with User Input | `CRITICAL` |
 | **SAST & Taint** | `SAST-002` | Command Injection: Untrusted Input in System Shell Call | `CRITICAL` |
 | **SAST & Taint** | `SAST-003` | Dangerous Dynamic Code Execution via `eval()` | `CRITICAL` |
+| **SAST & Taint** | `SAST-004` | Server-Side Request Forgery (SSRF) | `HIGH` |
+| **SAST & Taint** | `SAST-005` | Path Traversal: Arbitrary File Read / Include | `HIGH` |
 | **SAST & Taint** | `SAST-006` | Cross-Site Scripting (XSS): `dangerouslySetInnerHTML` / DOM | `HIGH` |
 | **SAST & Taint** | `SAST-007` | Insecure Deserialization (`pickle` / unsafe `yaml`) | `CRITICAL` |
 | **SAST & Taint** | `SAST-008` | Disabled TLS Certificate Verification | `HIGH` |
+| **SAST & Taint** | `SAST-009` | Weak Cryptographic Hash (MD5 / SHA-1) | `MEDIUM` |
 | **SAST & Taint** | `SAST-011` | Open Redirect: Unvalidated URL in Redirect Call | `MEDIUM` |
 | **Secrets** | `SEC-001` | AWS Access Key ID Exposure | `CRITICAL` |
 | **Secrets** | `SEC-002` | GitHub Personal Access Token Exposure | `CRITICAL` |
 | **Secrets** | `SEC-003` | OpenAI API Secret Key Exposure | `CRITICAL` |
 | **Secrets** | `SEC-004` | Stripe Live Secret Key Exposure | `CRITICAL` |
+| **Secrets** | `SEC-005` | Slack Bot / Webhook Token Exposure | `HIGH` |
+| **Secrets** | `SEC-006` | Google Cloud API Key Exposure | `HIGH` |
 | **Secrets** | `SEC-007` | Database Connection URI with Plaintext Password | `CRITICAL` |
+| **Secrets** | `SEC-008` | Private Cryptographic Key in Source | `CRITICAL` |
+| **Secrets** | `SEC-009` | Anthropic API Key Exposure | `CRITICAL` |
+| **Secrets** | `SEC-010` | Generic High-Entropy Secret / Token Exposure | `HIGH` |
 | **IaC & Cloud** | `IAC-001` | Container Default Execution as Root | `MEDIUM` |
 | **IaC & Cloud** | `IAC-002` | Insecure Remote Script Pipe (`curl \| sh`) | `HIGH` |
 | **IaC & Cloud** | `IAC-003` | Exposed Database Port in Container Manifest | `HIGH` |
 | **IaC & Cloud** | `IAC-004` | Docker Daemon Socket Mounted in Container | `CRITICAL` |
+| **IaC & Cloud** | `IAC-005` | Privileged Container Mode in Docker Compose | `HIGH` |
 | **IaC & Cloud** | `IAC-006` | Public S3 Bucket Configuration in Terraform | `CRITICAL` |
 | **IaC & Cloud** | `IAC-007` | Sensitive Port Open to `0.0.0.0/0` in Security Group | `CRITICAL` |
 | **IaC & Cloud** | `IAC-008` | Kubernetes Pod Configured with Host Network or Host PID | `HIGH` |
 | **IaC & Cloud** | `IAC-009` | Kubernetes Container Allows Privilege Escalation | `HIGH` |
 | **IaC & Cloud** | `IAC-010` | Secret Baked into Dockerfile `ENV` Instruction | `CRITICAL` |
+| **IaC & Cloud** | `IAC-011` | Unencrypted Storage Volume / Database in Terraform | `MEDIUM` |
 | **AI & MCP** | `MCP-001` | Unsandboxed Shell Execution Tool in MCP Config | `CRITICAL` |
 | **AI & MCP** | `MCP-002` | Unrestricted Root Filesystem Path in MCP Server | `HIGH` |
+| **AI & MCP** | `MCP-003` | Hardcoded Secret in MCP Server Config | `CRITICAL` |
 | **AI & MCP** | `MCP-004` | Prompt Injection Risk in Agent System Prompt | `MEDIUM` |
 | **SCA & CVE** | `CVE-xxxx` | Known Vulnerable Dependency (npm, PyPI, Go, Composer) | `HIGH` / `CRITICAL` |
 | **SCA & CVE** | Reachability | Imported vs Dormant Dependency Vulnerability Tagging | `INFO` |
 | **Supply Chain** | `SUPPLY-001`| Suspicious Outbound Script in Package Lifecycle Hook | `CRITICAL` |
+| **Supply Chain** | `SUPPLY-002`| Unpinned Git Repository Dependency | `HIGH` |
 
 ---
 

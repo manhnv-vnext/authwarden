@@ -54,6 +54,20 @@ export function scanMcpAgent(file) {
         remediation: 'Scope allowed directories strictly to the specific project directory.'
       });
     }
+
+    // 3. Hardcoded Secret in MCP Server Config (MCP-003)
+    if (/"env"\s*:\s*\{[^}]*"(?:[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|AUTH)[A-Z0-9_]*)"\s*:\s*"([^"]{12,})"/i.test(content)) {
+      findings.push({
+        ruleId: 'MCP-003',
+        severity: 'CRITICAL',
+        title: 'Hardcoded Secret / API Token in MCP Configuration',
+        file: relPath,
+        line: 1,
+        snippet: 'env: { ... SECRET_KEY: "***" ... }',
+        description: 'MCP server configuration bakes sensitive API keys or credentials directly into config files, risking credential exposure via git or tool sharing.',
+        remediation: 'Pass sensitive API tokens via runtime process environment variables rather than hardcoding them in MCP JSON manifests.'
+      });
+    }
   }
 
   // 3. Prompt Injection Risk in Prompts / System instructions

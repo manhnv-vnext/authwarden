@@ -59,3 +59,35 @@ test('detects vulnerable Python package in requirements.txt', async () => {
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('detects CVE in package-lock.json (resolved transitive dependencies)', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-cve-lock-'));
+  const lockFile = path.join(tmpDir, 'package-lock.json');
+  const codeFile = path.join(tmpDir, 'server.js');
+
+  const lockJson = {
+    name: 'test-app',
+    version: '1.0.0',
+    lockfileVersion: 3,
+    packages: {
+      '': { name: 'test-app', version: '1.0.0' },
+      'node_modules/axios': {
+        version: '1.6.0'
+      }
+    }
+  };
+  fs.writeFileSync(lockFile, JSON.stringify(lockJson, null, 2));
+  fs.writeFileSync(codeFile, "const axios = require('axios');\n");
+
+  const allFiles = [
+    { path: lockFile, relative: 'package-lock.json', name: 'package-lock.json', ext: '.json' },
+    { path: codeFile, relative: 'server.js', name: 'server.js', ext: '.js' }
+  ];
+
+  const findings = await scanCVEs(allFiles[0], allFiles);
+  const axiosVuln = findings.find(f => f.ruleId === 'CVE-2023-45857');
+  assert.ok(axiosVuln, 'Expected CVE-2023-45857 for vulnerable axios in lockfile');
+  assert.equal(axiosVuln.isReachable, true);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

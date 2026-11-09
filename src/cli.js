@@ -4,19 +4,20 @@ import { runScan } from './index.js';
 import { printTerminalReport } from './reporters/terminalReporter.js';
 import { generateSarif, generateMarkdown, generateJson } from './reporters/sarifReporter.js';
 import { colors } from './utils/colors.js';
+import { getGitChangedFiles } from './utils/git.js';
 
-export async function cli(args) {
-  const command = args[0] || 'scan';
-
-  if (command === '--help' || command === '-h' || command === 'help') {
+export async function cli(args = []) {
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
     printHelp();
     return 0;
   }
 
-  if (command === '--version' || command === '-v' || command === 'version') {
-    console.log('authwarden v1.1.0');
+  if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
+    console.log('authwarden v1.1.1');
     return 0;
   }
+
+  const command = args[0];
 
   if (command === 'init-hook') {
     return installPreCommitHook();
@@ -26,55 +27,79 @@ export async function cli(args) {
     return listRules();
   }
 
-  if (command === 'scan' || !command.startsWith('-')) {
-    const targetDir = (command === 'scan' ? args[1] : command) || '.';
-    const options = {
-      verify: args.includes('--verify'),
-      format: getArgValue(args, '--format') || 'terminal',
-      output: getArgValue(args, '--output'),
-      failOn: getArgValue(args, '--fail-on') || 'high'
-    };
+  // Parse options and positional target argument
+  const valFlags = new Set(['--format', '--output', '--fail-on']);
+  const positionals = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === 'scan' && i === 0) continue;
+    if (valFlags.has(arg)) {
+      i++; // skip next arg (its value)
+      continue;
+    }
+    if (arg.startsWith('--') || arg.startsWith('-')) {
+      continue; // boolean flag or flag=value
+    }
+    positionals.push(arg);
+  }
 
-    try {
-      const scanResult = await runScan(targetDir, options);
+  const targetDir = positionals[0] || process.env.INPUT_PATH || '.';
+  const isStaged = args.includes('--staged') || process.env.INPUT_STAGED === 'true';
+  const options = {
+    verify: args.includes('--verify') || process.env.INPUT_VERIFY === 'true',
+    staged: isStaged,
+    format: getArgValue(args, '--format') || process.env.INPUT_FORMAT || 'terminal',
+    output: getArgValue(args, '--output') || process.env.INPUT_OUTPUT || null,
+    failOn: getArgValue(args, '--fail-on') || process.env['INPUT_FAIL-ON'] || process.env.INPUT_FAIL_ON || 'high'
+  };
 
-      // Output formatting
-      let outputText = '';
-      if (options.format === 'sarif') {
-        outputText = generateSarif(scanResult);
-      } else if (options.format === 'markdown' || options.format === 'md') {
-        outputText = generateMarkdown(scanResult);
-      } else if (options.format === 'json') {
-        outputText = generateJson(scanResult);
-      } else {
-        printTerminalReport(scanResult);
+  if (isStaged) {
+    const stagedFiles = getGitChangedFiles(targetDir, { stagedOnly: true });
+    if (stagedFiles) {
+      if (stagedFiles.length === 0) {
+        console.log(colors.green('✔ No staged git files to scan. Pre-commit check passed.'));
+        return 0;
       }
-
-      if (options.output && outputText) {
-        fs.writeFileSync(path.resolve(options.output), outputText, 'utf8');
-        console.log(colors.green(`Report saved to ${options.output}`));
-      } else if (options.format !== 'terminal' && outputText) {
-        console.log(outputText);
-      }
-
-      // Exit code evaluation
-      const severityLevels = { critical: 4, high: 3, medium: 2, low: 1 };
-      const threshold = severityLevels[options.failOn.toLowerCase()] || 3;
-
-      const hasBlockingFinding = scanResult.findings.some(f => {
-        const level = severityLevels[f.severity.toLowerCase()] || 0;
-        return level >= threshold;
-      });
-
-      return hasBlockingFinding ? 1 : 0;
-    } catch (err) {
-      console.error(colors.red(`Error during scan: ${err.message}`));
-      return 2;
+      options.onlyFiles = stagedFiles;
     }
   }
 
-  printHelp();
-  return 1;
+  try {
+    const scanResult = await runScan(targetDir, options);
+
+    // Output formatting
+    let outputText = '';
+    if (options.format === 'sarif') {
+      outputText = generateSarif(scanResult);
+    } else if (options.format === 'markdown' || options.format === 'md') {
+      outputText = generateMarkdown(scanResult);
+    } else if (options.format === 'json') {
+      outputText = generateJson(scanResult);
+    } else {
+      printTerminalReport(scanResult);
+    }
+
+    if (options.output && outputText) {
+      fs.writeFileSync(path.resolve(options.output), outputText, 'utf8');
+      console.log(colors.green(`Report saved to ${options.output}`));
+    } else if (options.format !== 'terminal' && outputText) {
+      console.log(outputText);
+    }
+
+    // Exit code evaluation
+    const severityLevels = { critical: 4, high: 3, medium: 2, low: 1 };
+    const threshold = severityLevels[options.failOn.toLowerCase()] || 3;
+
+    const hasBlockingFinding = scanResult.findings.some(f => {
+      const level = severityLevels[f.severity.toLowerCase()] || 0;
+      return level >= threshold;
+    });
+
+    return hasBlockingFinding ? 1 : 0;
+  } catch (err) {
+    console.error(colors.red(`Error during scan: ${err.message}`));
+    return 2;
+  }
 }
 
 function getArgValue(args, flag) {
@@ -97,6 +122,7 @@ ${colors.bold('USAGE:')}
   authwarden rules
 
 ${colors.bold('OPTIONS:')}
+  --staged            Scan only staged git changes (fast for pre-commit hooks)
   --verify            Safely verify detected secrets against live APIs (e.g. Stripe, GitHub)
   --format <type>     Output format: terminal (default), sarif, markdown, json
   --output <file>     Write report output to specified file
@@ -107,7 +133,8 @@ ${colors.bold('OPTIONS:')}
 ${colors.bold('EXAMPLES:')}
   $ npx authwarden scan .
   $ npx authwarden scan . --verify
-  $ npx authwarden scan . --format sarif --output results.sarif
+  $ npx authwarden scan --format sarif --output results.sarif .
+  $ npx authwarden scan --staged
   $ npx authwarden init-hook
 `);
 }
@@ -123,7 +150,7 @@ function installPreCommitHook() {
   const hookScript = `#!/usr/bin/env sh
 # AuthWarden Pre-commit Security Gate
 echo "🛡️  Running AuthWarden pre-commit security check..."
-npx authwarden scan . --fail-on high
+npx authwarden scan . --staged --fail-on high
 `;
 
   try {
@@ -174,6 +201,8 @@ ${colors.bold('SECRETS & TOKENS:')}
   • ${colors.yellow('SEC-006')}   Google Cloud API Key Exposure
   • ${colors.red('SEC-007')}   Database Connection String with Credentials
   • ${colors.red('SEC-008')}   Private Cryptographic Key in Source
+  • ${colors.red('SEC-009')}   Anthropic API Key Exposure
+  • ${colors.yellow('SEC-010')} Generic High-Entropy Secret / Token Exposure
 
 ${colors.bold('CONTAINER & CLOUD IAC:')}
   • ${colors.blue('IAC-001')}   Container Default Execution as Root
@@ -204,13 +233,14 @@ ${colors.bold('OPENAPI & API SPEC CONTRACTS:')}
 ${colors.bold('AI AGENT & MCP TOOLS:')}
   • ${colors.red('MCP-001')}   Unsandboxed Shell Execution Tool in MCP Config
   • ${colors.yellow('MCP-002')}   Unrestricted Root Filesystem Path in MCP Server
+  • ${colors.red('MCP-003')}   Hardcoded Secret in MCP Server Config
   • ${colors.blue('MCP-004')}   Prompt Injection Concatenation in System Instructions
 
 ${colors.bold('SCA & KNOWN CVE VULNERABILITIES:')}
   • ${colors.red('CVE-xxxx')}  Known High/Critical Vulnerabilities in Dependencies (npm, PyPI, Go, Composer)
   • ${colors.bold('Reachability')} AST-guided Reachability Analysis (Flags Imported vs Dormant Vulnerabilities)
-  • ${colors.yellow('SUP-001')}   Lifecycle Script Exfiltration Risk in package.json
-  • ${colors.blue('SUP-002')}   Unpinned Git Repository Dependency
+  • ${colors.yellow('SUPPLY-001')} Lifecycle Script Exfiltration Risk in package.json
+  • ${colors.blue('SUPPLY-002')} Unpinned Git Repository Dependency
 `);
   return 0;
 }

@@ -26,6 +26,10 @@ inputs:
     description: 'File path to write report'
     required: false
     default: ''
+  staged:
+    description: 'Whether to scan only staged git changes'
+    required: false
+    default: 'false'
 
 runs:
   using: 'node20'

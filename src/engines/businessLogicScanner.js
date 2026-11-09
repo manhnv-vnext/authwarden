@@ -28,9 +28,10 @@ const LOGIC_RULES = [
     title: 'Potential TOCTOU Race Condition on Balance / Coupon State',
     description: 'Non-atomic check-then-act operation detected on financial balance or one-time coupon. Concurrent requests can cause double-spending.',
     remediation: 'Use database transactions with row-level locks (e.g. SELECT FOR UPDATE) or atomic conditional updates (e.g. UPDATE coupons SET used=true WHERE id=? AND used=false).',
-    test: (line, content) => {
+    test: (line, content, lines, idx) => {
       if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
-      return /(?:if\s*\([^)]*balance\s*>=?[^)]*\)[\s\S]{0,80}balance\s*-=|coupon\.isUsed\s*===\s*false[\s\S]{0,80}coupon\.isUsed\s*=\s*true)/i.test(line);
+      const window = lines.slice(idx, Math.min(lines.length, idx + 10)).join('\n');
+      return /(?:if\s*\([^)]*balance\s*>=?[^)]*\)[\s\S]{0,120}balance\s*-=|coupon\.isUsed\s*===\s*false[\s\S]{0,120}coupon\.isUsed\s*=\s*true)/i.test(window);
     }
   },
   {
@@ -63,7 +64,7 @@ const LOGIC_RULES = [
     remediation: 'Invalidate the server-side session or record the JWT identifier (jti) in a token revocation blacklist on logout.',
     test: (line, content) => {
       if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
-      return /(?:router|app)\.(?:post|get)\s*\(\s*['"]\/(?:api\/)?(?:auth\/)?log(?:out|off|in-out)/i.test(line) &&
+      return /(?:router|app)\.(?:post|get)\s*\(\s*['"]\/(?:api\/)?(?:auth\/)?(?:log(?:out|off|in-out)|sign(?:out|-out))/i.test(line) &&
         !content.includes('revoke') && !content.includes('blacklist') && !content.includes('destroy') && !content.includes('deleteSession');
     }
   }
@@ -97,7 +98,7 @@ export async function scanBusinessLogic(file, allFiles = [], options = {}) {
     const line = lines[idx];
 
     for (const rule of LOGIC_RULES) {
-      if (rule.test(line, content)) {
+      if (rule.test(line, content, lines, idx)) {
         findings.push({
           ruleId: rule.id,
           severity: rule.severity,

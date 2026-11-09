@@ -1,6 +1,4 @@
 import fs from 'fs';
-import path from 'path';
-import https from 'https';
 
 /**
  * Software Composition Analysis (SCA) & CVE Vulnerability Scanner
@@ -295,6 +293,57 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
     }
   }
 
+  // 1b. Scan package-lock.json (Resolved dependencies including transitive)
+  if (fileName === 'package-lock.json') {
+    try {
+      const lock = JSON.parse(content);
+      const scannedPkgs = new Set();
+      
+      const checkDep = (depName, version) => {
+        if (!depName || !version || scannedPkgs.has(depName + '@' + version)) return;
+        scannedPkgs.add(depName + '@' + version);
+
+        const match = CURATED_CVE_DB.find(
+          item => item.ecosystem === 'npm' && item.package.toLowerCase() === depName.toLowerCase()
+        );
+
+        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+          const isReachable = checkPackageReachable(depName, allFiles);
+          const lineNo = findLineNumber(content, `"${depName}"`);
+
+          findings.push({
+            ruleId: match.cve,
+            severity: match.severity,
+            title: `${match.title} (${depName} ${version}) [lockfile]`,
+            file: relPath,
+            line: lineNo,
+            snippet: `"${depName}": "${version}"`,
+            isReachable,
+            description: `${match.description} (Affected: ${match.affectedVersion}).` +
+              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Resolved dependency in lockfile)'),
+            remediation: `${match.remediation} (Resolved: ${version})`
+          });
+        }
+      };
+
+      if (lock.packages) {
+        for (const [pkgPath, pkgInfo] of Object.entries(lock.packages)) {
+          if (!pkgPath || !pkgInfo.version) continue;
+          const depName = pkgPath.replace(/^.*node_modules\//, '');
+          checkDep(depName, pkgInfo.version);
+        }
+      } else if (lock.dependencies) {
+        for (const [depName, depInfo] of Object.entries(lock.dependencies)) {
+          if (depInfo && depInfo.version) {
+            checkDep(depName, depInfo.version);
+          }
+        }
+      }
+    } catch {
+      // Skip invalid json
+    }
+  }
+
   // 2. Scan requirements.txt
   if (fileName === 'requirements.txt') {
     const lines = content.split('\n');
@@ -394,20 +443,34 @@ function findLineNumber(content, text) {
   return idx === -1 ? 1 : idx + 1;
 }
 
+const candidateFilesCache = new WeakMap();
+
+function getCandidateCodes(allFiles) {
+  if (candidateFilesCache.has(allFiles)) {
+    return candidateFilesCache.get(allFiles);
+  }
+  const codes = [];
+  for (const f of allFiles) {
+    if (!['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue'].includes(f.ext)) continue;
+    if (f.relative.includes('node_modules')) continue;
+    try {
+      const code = fs.readFileSync(f.path, 'utf8');
+      codes.push(code);
+    } catch {
+      // skip
+    }
+  }
+  candidateFilesCache.set(allFiles, codes);
+  return codes;
+}
+
 function checkPackageReachable(pkgName, allFiles) {
   const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const importRegex = new RegExp(`(?:from\\s+['"]${escaped}(?:\\/[^'"]*)?['"]|require\\s*\\(\\s*['"]${escaped}(?:\\/[^'"]*)?['"]\\)|import\\s*\\(['"]${escaped}(?:\\/[^'"]*)?['"]\\))`, 'i');
 
-  for (const f of allFiles) {
-    if (!['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue'].includes(f.ext)) continue;
-    if (f.relative.includes('node_modules')) continue;
-
-    try {
-      const code = fs.readFileSync(f.path, 'utf8');
-      if (importRegex.test(code)) return true;
-    } catch {
-      // skip
-    }
+  const codes = getCandidateCodes(allFiles);
+  for (const code of codes) {
+    if (importRegex.test(code)) return true;
   }
   return false;
 }

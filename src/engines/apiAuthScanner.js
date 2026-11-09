@@ -224,7 +224,6 @@ export function scanApiAuth(file) {
           description: 'Database query queries an object directly by identifier without validating ownership against the authenticated user/tenant session.',
           remediation: 'Scope the query to the authenticated user: db.item.findFirst({ where: { id, userId: req.user.id } })'
         });
-        break;
       }
     }
 
@@ -240,7 +239,6 @@ export function scanApiAuth(file) {
         description: 'Entire request body is passed directly to database mutation. Attackers can inject privileged fields (e.g. role, isAdmin, balance).',
         remediation: 'Use a strict DTO or pick only allowed fields: const { name, bio } = req.body; await db.user.update({ data: { name, bio } });'
       });
-      break;
     }
 
     // Pattern: Sensitive Data Exposure in API response
@@ -255,7 +253,6 @@ export function scanApiAuth(file) {
         description: 'Response payload appears to serialize sensitive user attributes such as password_hash or salt.',
         remediation: 'Exclude password hashes and internal credentials before returning user models: delete user.password_hash or use a sanitized DTO.'
       });
-      break;
     }
   }
 

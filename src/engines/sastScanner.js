@@ -27,7 +27,7 @@ export const SAST_RULES = [
     cwe: 'CWE-78',
     owasp: 'A03:2021-Injection',
     languages: ['.js', '.jsx', '.ts', '.tsx', '.py', '.php'],
-    regex: /(?:\bchild_process\.|(?<![\w$.]))(?:exec|execSync|system|popen)\s*\(\s*(?:`[^`]*\$\{[^`]*`|[^)]*\+[^)]*(?:\breq\.(?:query|body|params)\b|\brequest\.|\$_(?:GET|POST|REQUEST)\b))/i,
+    regex: /(?:\bchild_process\.|(?<![\w$.]))(?:exec|execSync|system|popen)\s*\(\s*(?:`[^`]*\$\{[^`]*?(?:\breq\.(?:query|body|params)\b|\brequest\.|\$_(?:GET|POST|REQUEST)\b)[^`]*`|[^)]*(?:\breq\.(?:query|body|params)\b|\brequest\.|\$_(?:GET|POST|REQUEST)\b)[^)]*)\)/i,
     description: 'Untrusted user input passed directly to system shell execution.',
     remediation: 'Avoid executing shell commands. Use `execFile` or `spawn` with an argument array instead of a shell string.'
   },
@@ -146,7 +146,7 @@ const TAINT_SINKS = [
     severity: 'CRITICAL',
     title: 'Taint Flow: Request Input Reaches Command Execution (RCE)',
     cwe: 'CWE-78',
-    sinkRegex: (v) => new RegExp(`\\b(?:exec|execSync)\\s*\\(\\s*${v}\\b|\\bspawn(?:Sync)?\\s*\\(\\s*${v}\\b[^)]*shell\\s*:\\s*true`),
+    sinkRegex: (v) => new RegExp(`\\b(?:exec|execSync)\\s*\\([^)]*?\\b${v}\\b|\\bspawn(?:Sync)?\\s*\\([^)]*?\\b${v}\\b[^)]*shell\\s*:\\s*true`),
     description: 'A variable built from untrusted request input flows into a shell execution call.',
     remediation: 'Use `execFile` with an argument array (no shell) and validate input against a strict allowlist.'
   },
@@ -155,7 +155,7 @@ const TAINT_SINKS = [
     severity: 'CRITICAL',
     title: 'Taint Flow: Request Input Reaches Raw SQL Query',
     cwe: 'CWE-89',
-    sinkRegex: (v) => new RegExp(`\\.(?:query|execute|raw|\\$queryRawUnsafe)\\s*\\(\\s*${v}\\s*[,)]`),
+    sinkRegex: (v) => new RegExp(`\\.(?:query|execute|raw|\\$queryRawUnsafe)\\s*\\([^)]*?\\b${v}\\b`),
     description: 'A SQL string constructed from untrusted request input is executed without parameter binding.',
     remediation: 'Use parameterized queries (`db.query("... WHERE id = $1", [id])`) or an ORM query builder.'
   },
@@ -164,7 +164,7 @@ const TAINT_SINKS = [
     severity: 'HIGH',
     title: 'Taint Flow: Request Input Reaches File System Read / SendFile',
     cwe: 'CWE-22',
-    sinkRegex: (v) => new RegExp(`\\bfs\\.(?:readFile|readFileSync|createReadStream)\\s*\\(\\s*${v}\\b|\\bres\\.(?:sendFile|download)\\s*\\(\\s*${v}\\b`),
+    sinkRegex: (v) => new RegExp(`\\bfs\\.(?:readFile|readFileSync|createReadStream)\\s*\\([^)]*?\\b${v}\\b|\\bres\\.(?:sendFile|download)\\s*\\([^)]*?\\b${v}\\b`),
     description: 'A file path built from untrusted request input flows into a file system API.',
     remediation: 'Resolve the path and verify it stays inside an allowed base directory; apply `path.basename()`.'
   },
@@ -173,7 +173,7 @@ const TAINT_SINKS = [
     severity: 'HIGH',
     title: 'Taint Flow: Request Input Reaches Outbound HTTP Call (SSRF)',
     cwe: 'CWE-918',
-    sinkRegex: (v) => new RegExp(`(?:\\bfetch|\\baxios\\.(?:get|post)|\\bhttps?\\.get)\\s*\\(\\s*${v}\\b`),
+    sinkRegex: (v) => new RegExp(`(?:\\bfetch|\\baxios\\.(?:get|post)|\\bhttps?\\.get)\\s*\\([^)]*?\\b${v}\\b`),
     description: 'A URL derived from request input is requested by the server without SSRF validation.',
     remediation: 'Validate destination URLs against an allowlist and block cloud metadata IP (169.254.169.254).'
   }

@@ -26,6 +26,10 @@ export function scanIaC(file) {
       const line = lines[i].trim();
       if (line.startsWith('#')) continue;
 
+      if (/^FROM\s+/i.test(line)) {
+        hasUser = false; // Reset for each build stage
+      }
+
       if (/^USER\s+/i.test(line)) {
         hasUser = true;
       }

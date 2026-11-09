@@ -11,6 +11,7 @@ function checkHttps(options) {
       ...options,
       timeout: 3000
     }, (res) => {
+      res.resume(); // consume response data to free socket
       resolve({ status: res.statusCode });
     });
 
@@ -28,14 +29,14 @@ export async function verifySecret(finding) {
   if (!secret) return null;
 
   try {
-    // 1. GitHub Personal Access Token
+    // 1. GitHub Personal Access Token (supports both fine-grained and classic)
     if (finding.secretType === 'github_pat') {
       const res = await checkHttps({
         hostname: 'api.github.com',
         path: '/user',
         method: 'GET',
         headers: {
-          'Authorization': `token ${secret}`,
+          'Authorization': `Bearer ${secret}`,
           'User-Agent': 'AuthWarden-Scanner'
         }
       });

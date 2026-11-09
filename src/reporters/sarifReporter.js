@@ -48,7 +48,7 @@ export function generateSarif(scanResult) {
         tool: {
           driver: {
             name: 'AuthWarden',
-            semanticVersion: '1.0.0',
+            semanticVersion: '1.1.1',
             informationUri: 'https://github.com/manhnv-vnext/authwarden',
             rules: sarifRules
           }

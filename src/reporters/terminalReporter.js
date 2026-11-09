@@ -8,7 +8,7 @@ export function printTerminalReport(scanResult) {
   console.log(colors.cyan(colors.bold('   ___         __  __    _      __              __          ')));
   console.log(colors.blue(colors.bold('  / _ | __ __ / /_/ /_  | | /| / /__ _____ ___ / /__ ___    ')));
   console.log(colors.magenta(colors.bold(' / __ |/ // // __/ _ \\  | |/ |/ / _ `/ __// _  / -_) _ \\   ')));
-  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v1.1.0')));
+  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v1.1.1')));
   console.log(colors.gray(' ──────────────────────────────────────────────────────────────────────────'));
   
   // Target & Environment Info

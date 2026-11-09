@@ -130,6 +130,54 @@ export async function scanApiSpecs(file, allFiles = [], options = {}) {
     } catch {
       // ignore
     }
+  } else {
+    // Zero-dependency YAML Spec Auditor
+    const hasGlobalSecurity = /(?:^|\n)security\s*:\s*\n\s*-\s*\w+/m.test(content) || /(?:^|\n)security\s*:\s*\[\s*\{/m.test(content);
+    let currentRoute = null;
+    let currentMethod = null;
+    let currentMethodLine = 0;
+    let methodHasSecurity = false;
+
+    const flushMethod = () => {
+      if (currentRoute && currentMethod && !hasGlobalSecurity && !methodHasSecurity) {
+        findings.push({
+          ruleId: 'SPEC-001',
+          severity: 'HIGH',
+          title: `Unprotected Sensitive Operation in API Spec: ${currentMethod.toUpperCase()} ${currentRoute}`,
+          file: relPath,
+          line: currentMethodLine,
+          snippet: `${currentRoute} > ${currentMethod}:`,
+          description: `High-privilege route ${currentRoute} has no security requirement defined at operation or document root.`,
+          remediation: 'Add a security requirement (e.g. bearerAuth, apiKey) to this operation or globally.'
+        });
+      }
+      currentMethod = null;
+      methodHasSecurity = false;
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const routeMatch = line.match(/^\s{2,4}(['"]?(\/(?:api\/)?[a-zA-Z0-9_\-\/{}]*)['"]?)\s*:/);
+      if (routeMatch) {
+        flushMethod();
+        const rPath = routeMatch[2];
+        currentRoute = /(?:admin|internal|payment|credit|vault)/i.test(rPath) ? rPath : null;
+        continue;
+      }
+      if (currentRoute) {
+        const methodMatch = line.match(/^\s{4,6}(get|post|put|delete|patch)\s*:/i);
+        if (methodMatch) {
+          flushMethod();
+          currentMethod = methodMatch[1].toLowerCase();
+          currentMethodLine = i + 1;
+          continue;
+        }
+        if (currentMethod && /^\s{6,10}security\s*:/i.test(line)) {
+          methodHasSecurity = true;
+        }
+      }
+    }
+    flushMethod();
   }
 
   return findings;

@@ -25,6 +25,34 @@ test('flags Dockerfile running as default root user', () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+test('flags multi-stage Dockerfile when final stage lacks USER directive', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-multistage-'));
+  const dockerfile = path.join(tmpDir, 'Dockerfile');
+  
+  const content = `
+FROM node:20 AS builder
+USER node
+RUN npm run build
+
+FROM alpine:latest
+COPY --from=builder /app/dist /app
+CMD ["./app"]
+`;
+  fs.writeFileSync(dockerfile, content);
+
+  const findings = scanIaC({
+    path: dockerfile,
+    relative: 'Dockerfile',
+    name: 'Dockerfile',
+    ext: ''
+  });
+
+  const rootFinding = findings.find(f => f.ruleId === 'IAC-001');
+  assert.ok(rootFinding, 'Expected IAC-001 because final stage runs as root');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
 test('flags Docker socket mount in docker-compose.yml', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-'));
   const composeFile = path.join(tmpDir, 'docker-compose.yml');

@@ -94,3 +94,54 @@ function download(req, res) {
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('does not flag benign constant template literal in exec as SAST-002', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-sast-fp-'));
+  const file = path.join(tmpDir, 'safe.js');
+
+  const code = `
+const { exec } = require('child_process');
+const id = 123;
+exec(\`echo safe-\${id}\`);
+`;
+  fs.writeFileSync(file, code);
+
+  const findings = scanSAST({
+    path: file,
+    relative: 'src/safe.js',
+    name: 'safe.js',
+    ext: '.js'
+  });
+
+  const cmdInj = findings.find(f => f.ruleId === 'SAST-002');
+  assert.equal(cmdInj, undefined, 'Constant template literal should not trigger SAST-002');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('tracks taint flow through template literal concatenation to sink (TAINT-001)', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-sast-tmpl-'));
+  const file = path.join(tmpDir, 'tmplTaint.js');
+
+  const code = `
+const { exec } = require('child_process');
+function run(req, res) {
+  const branch = req.body.branch;
+  exec(\`git checkout \${branch}\`);
+}
+`;
+  fs.writeFileSync(file, code);
+
+  const findings = scanSAST({
+    path: file,
+    relative: 'src/tmplTaint.js',
+    name: 'tmplTaint.js',
+    ext: '.js'
+  });
+
+  const taintFinding = findings.find(f => f.ruleId === 'TAINT-001');
+  assert.ok(taintFinding, 'Expected TAINT-001 for template literal sink');
+  assert.equal(taintFinding.severity, 'CRITICAL');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

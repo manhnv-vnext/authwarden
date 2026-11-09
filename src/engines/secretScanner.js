@@ -45,14 +45,14 @@ export const SECRET_RULES = [
     name: 'Google Cloud API Key',
     severity: 'HIGH',
     type: 'gcp_key',
-    regex: /\bAIza[0-9A-Za-z\\-_]{35}\b/g
+    regex: /\bAIza[0-9A-Za-z_-]{35}\b/g
   },
   {
     id: 'SEC-007',
     name: 'Database Connection String with Credentials',
     severity: 'CRITICAL',
     type: 'db_uri',
-    regex: /\b(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis):\/\/[a-zA-Z0-9_]+:[^@\s/:]+@[a-zA-Z0-9.-]+(?::[0-9]+)?\/[a-zA-Z0-9_.-]*/g
+    regex: /\b(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis):\/\/[a-zA-Z0-9_]+:[^@\s/:]+@[a-zA-Z0-9.-]+(?::[0-9]+)?(?:\/[a-zA-Z0-9_.-]*)?/g
   },
   {
     id: 'SEC-008',
@@ -60,8 +60,38 @@ export const SECRET_RULES = [
     severity: 'CRITICAL',
     type: 'private_key',
     regex: /-----BEGIN\s+(?:RSA|OPENSSH|EC|PGP|DSA)?\s*PRIVATE\s+KEY-----/g
+  },
+  {
+    id: 'SEC-009',
+    name: 'Anthropic API Key',
+    severity: 'CRITICAL',
+    type: 'anthropic_key',
+    regex: /\bsk-ant-api[0-9]{2}-[a-zA-Z0-9_\-]{80,100}\b/g
+  },
+  {
+    id: 'SEC-010',
+    name: 'Generic High-Entropy Secret / Token',
+    severity: 'HIGH',
+    type: 'high_entropy_secret',
+    entropyThreshold: 3.8,
+    regex: /(?:api[_-]?secret|api[_-]?key|secret[_-]?key|auth[_-]?token|access[_-]?token|private[_-]?key)\s*[:=]\s*['"]([a-zA-Z0-9_\-+/]{24,80})['"]/gi
   }
 ];
+
+export function calculateShannonEntropy(str) {
+  if (!str || str.length === 0) return 0;
+  const frequencies = {};
+  for (const char of str) {
+    frequencies[char] = (frequencies[char] || 0) + 1;
+  }
+  let entropy = 0;
+  const len = str.length;
+  for (const count of Object.values(frequencies)) {
+    const p = count / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
 
 export function redactSecret(secret) {
   if (!secret || secret.length < 8) return '********';
@@ -93,8 +123,16 @@ export function scanSecrets(file) {
     let match;
     const regex = new RegExp(rule.regex);
     while ((match = regex.exec(content)) !== null) {
-      const secretValue = match[0];
+      let secretValue = match[0];
       
+      if (rule.entropyThreshold) {
+        const token = match[1] || match[0];
+        if (calculateShannonEntropy(token) < rule.entropyThreshold) {
+          continue;
+        }
+        secretValue = token;
+      }
+
       // Filter out obvious documentation or dummy examples
       if (/example|dummy|placeholder|your_key|my_secret|12345678/i.test(secretValue)) {
         continue;

@@ -88,7 +88,7 @@ export async function runScan(targetPath = '.', options = {}) {
     allFindings.push(...mcpFindings);
 
     // 7. CVE & Software Composition Analysis (SCA) Scanner
-    if (['package.json', 'requirements.txt', 'go.mod', 'composer.json'].includes(file.name.toLowerCase())) {
+    if (['package.json', 'package-lock.json', 'requirements.txt', 'go.mod', 'composer.json'].includes(file.name.toLowerCase())) {
       const cveFindings = await scanCVEs(file, files, options);
       allFindings.push(...cveFindings);
     }
@@ -102,10 +102,80 @@ export async function runScan(targetPath = '.', options = {}) {
     allFindings.push(...specFindings);
   }
 
+  // 10. Custom Organization Rules Loader (from rules/*.json if present)
+  const rulesDir = path.resolve(rootDir, 'rules');
+  if (fs.existsSync(rulesDir)) {
+    try {
+      const ruleFiles = fs.readdirSync(rulesDir).filter(f => f.endsWith('.json'));
+      for (const rf of ruleFiles) {
+        const raw = fs.readFileSync(path.join(rulesDir, rf), 'utf8');
+        const customRules = JSON.parse(raw);
+        if (Array.isArray(customRules)) {
+          for (const cr of customRules) {
+            if (!cr.pattern || !cr.id) continue;
+            const rx = new RegExp(cr.pattern, 'i');
+            for (const file of files) {
+              if (cr.languages && !cr.languages.includes(file.ext)) continue;
+              try {
+                const fContent = fs.readFileSync(file.path, 'utf8');
+                const fLines = fContent.split('\n');
+                fLines.forEach((l, idx) => {
+                  if (rx.test(l)) {
+                    allFindings.push({
+                      ruleId: cr.id,
+                      severity: cr.severity || 'HIGH',
+                      title: cr.name || cr.id,
+                      file: file.relative.replace(/\\/g, '/'),
+                      line: idx + 1,
+                      snippet: l.trim(),
+                      description: cr.description || 'Matched custom organization security rule.',
+                      remediation: cr.remediation || 'Inspect code according to internal security guidelines.'
+                    });
+                  }
+                });
+              } catch {
+                // skip
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // skip invalid custom rules
+    }
+  }
+
+  // 11. Filter out findings suppressed via inline comments (e.g. // authwarden-disable-line)
+  const fileLinesCache = new Map();
+  const activeFindings = allFindings.filter(f => {
+    try {
+      const fullPath = path.resolve(rootDir, f.file);
+      if (!fs.existsSync(fullPath)) return true;
+      let lines = fileLinesCache.get(fullPath);
+      if (!lines) {
+        lines = fs.readFileSync(fullPath, 'utf8').split('\n');
+        fileLinesCache.set(fullPath, lines);
+      }
+      const lineIdx = (f.line || 1) - 1;
+      const currentLine = lines[lineIdx] || '';
+      const prevLine = lineIdx > 0 ? (lines[lineIdx - 1] || '') : '';
+
+      if (currentLine.includes('authwarden-disable-line') || currentLine.includes('authwarden-ignore')) {
+        return false;
+      }
+      if (prevLine.includes('authwarden-disable-next-line')) {
+        return false;
+      }
+    } catch {
+      // keep finding on read error
+    }
+    return true;
+  });
+
   // Active Verification (if enabled)
   const verifiedMap = {};
   if (options.verify) {
-    for (const f of allFindings) {
+    for (const f of activeFindings) {
       if (f.rawSecret && !verifiedMap[f.rawSecret]) {
         const v = await verifySecret(f);
         if (v) verifiedMap[f.rawSecret] = v;
@@ -115,13 +185,13 @@ export async function runScan(targetPath = '.', options = {}) {
 
   // Sort findings by severity
   const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-  allFindings.sort((a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99));
+  activeFindings.sort((a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99));
 
   const durationMs = Date.now() - startTime;
 
   return {
     targetDir: rootDir,
-    findings: allFindings,
+    findings: activeFindings,
     verifiedMap,
     stats: {
       filesScanned: files.length,

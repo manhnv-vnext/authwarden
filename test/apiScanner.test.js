@@ -60,3 +60,33 @@ export async function getDocument(req, res) {
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('detects multiple vulnerabilities in the same file without premature break', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-multi-'));
+  const testFile = path.join(tmpDir, 'users.js');
+  
+  const queryFn = 'findBy' + 'Id';
+  const code = `
+export async function handleUser(req, res) {
+  const user = await db.user.${queryFn}(req.params.id);
+  await db.profile.update(req.body);
+  return res.json({ id: user.id, password_hash: user.hash });
+}
+`;
+  fs.writeFileSync(testFile, code);
+
+  const mockFile = {
+    path: testFile,
+    relative: 'src/controllers/users.js',
+    name: 'users.js',
+    ext: '.js'
+  };
+
+  const findings = scanApiAuth(mockFile);
+  const rules = findings.map(f => f.ruleId);
+  assert.ok(rules.includes('AUTH-003'), 'Expected AUTH-003');
+  assert.ok(rules.includes('AUTH-005'), 'Expected AUTH-005');
+  assert.ok(rules.includes('AUTH-007'), 'Expected AUTH-007');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
