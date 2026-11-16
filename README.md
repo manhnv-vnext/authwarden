@@ -41,7 +41,17 @@ No installation, no configuration files, no runtime bloat. Run directly in any r
 # 🚀 Instant scan via GitHub (Zero local install required):
 npx github:manhnv-vnext/authwarden scan .
 
-# 🔍 Safe read-only active live validation for discovered secrets:
+# 👁️ Continuous Watch Mode (instant re-scan on file save):
+npx github:manhnv-vnext/authwarden scan . --watch
+
+# 📈 Generate beautiful standalone interactive HTML dashboard:
+npx github:manhnv-vnext/authwarden scan . --format html --output report.html
+
+# 📌 Baseline snapshots (suppress legacy findings, only block newly introduced issues):
+npx github:manhnv-vnext/authwarden scan . --save-baseline .authwarden-baseline.json
+npx github:manhnv-vnext/authwarden scan . --baseline .authwarden-baseline.json
+
+# 🔍 Safe read-only active live validation for discovered secrets (Stripe, GitHub, OpenAI, Anthropic, Slack):
 npx github:manhnv-vnext/authwarden scan . --verify
 
 # 📊 Export SARIF for GitHub Code Scanning / Security Tab:
@@ -257,9 +267,29 @@ Fine-tune your build pipeline failure thresholds:
 - `--fail-on critical`: Exit code `1` only if Critical findings (active secrets, RCE, severe IDOR) are found.
 - `--fail-on high` (Default): Exit code `1` on High or Critical findings.
 - `--fail-on medium`: Strict compliance mode for zero warnings.
+- `--format html`: Generates an interactive, zero-dependency offline security dashboard with KPIs, search, and remediation copy.
 - `--format sarif`: Generates standard OASIS SARIF v2.1.0 output for GitHub/GitLab Code Quality tabs.
 - `--format json`: Machine-readable JSON output for custom security dashboards.
-- `--format markdown`: Clean markdown table suitable for posting directly as a Pull Request comment.
+- `--format markdown`: Clean markdown table suitable for posting directly as a Pull Request comment or automatically uploaded via `$GITHUB_STEP_SUMMARY`.
+- `--baseline <file>`: Suppress historical known vulnerabilities so CI only blocks newly added issues.
+- `--save-baseline <file>`: Create a baseline snapshot file from the current scan findings.
+- `--watch`: Real-time developer watch mode that re-scans files instantaneously upon save.
+- `--config <file>`: Load configuration options from a custom config file (or defaults to `.authwardenrc.json`).
+
+### 5. ⚙️ Configuration File (`.authwardenrc.json`)
+
+You can create an optional `.authwardenrc.json` in your repository root to configure defaults:
+
+```json
+{
+  "failOn": "high",
+  "format": "terminal",
+  "verify": false,
+  "ignoreRules": ["SAST-009"],
+  "ignorePaths": ["legacy/**", "fixtures/**"],
+  "baseline": ".authwarden-baseline.json"
+}
+```
 
 ---
 

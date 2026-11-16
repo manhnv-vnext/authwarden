@@ -8,7 +8,7 @@ export function printTerminalReport(scanResult) {
   console.log(colors.cyan(colors.bold('   ___         __  __    _      __              __          ')));
   console.log(colors.blue(colors.bold('  / _ | __ __ / /_/ /_  | | /| / /__ _____ ___ / /__ ___    ')));
   console.log(colors.magenta(colors.bold(' / __ |/ // // __/ _ \\  | |/ |/ / _ `/ __// _  / -_) _ \\   ')));
-  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v1.1.1')));
+  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v1.2.0')));
   console.log(colors.gray(' ──────────────────────────────────────────────────────────────────────────'));
   
   // Target & Environment Info
@@ -17,11 +17,17 @@ export function printTerminalReport(scanResult) {
     console.log(` ${colors.green('✔')} Frameworks: ${stats.frameworks.map(f => colors.cyan(f)).join(', ')}`);
   }
   console.log(` ${colors.green('✔')} Scanned ${colors.bold(stats.filesScanned)} files in ${colors.cyan(stats.durationMs + 'ms')}`);
+  if (scanResult.suppressedBaselineCount) {
+    console.log(` ${colors.cyan('ℹ')} Baseline: ${colors.bold(scanResult.suppressedBaselineCount)} historical finding(s) suppressed.`);
+  }
   console.log(colors.gray(' ──────────────────────────────────────────────────────────────────────────'));
   console.log('');
 
   if (findings.length === 0) {
-    console.log(` ${colors.bgGreen(colors.black(colors.bold(' PASS ')))} ${colors.green(colors.bold('No authorization flaws or security vulnerabilities detected!'))}`);
+    const msg = scanResult.suppressedBaselineCount
+      ? `No new vulnerabilities detected! (${scanResult.suppressedBaselineCount} historical finding(s) suppressed via baseline)`
+      : 'No authorization flaws or security vulnerabilities detected!';
+    console.log(` ${colors.bgGreen(colors.black(colors.bold(' PASS ')))} ${colors.green(colors.bold(msg))}`);
     console.log('');
     return;
   }

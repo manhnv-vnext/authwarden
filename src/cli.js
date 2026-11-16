@@ -3,8 +3,11 @@ import path from 'path';
 import { runScan } from './index.js';
 import { printTerminalReport } from './reporters/terminalReporter.js';
 import { generateSarif, generateMarkdown, generateJson } from './reporters/sarifReporter.js';
+import { generateHtml } from './reporters/htmlReporter.js';
 import { colors } from './utils/colors.js';
 import { getGitChangedFiles } from './utils/git.js';
+import { loadConfig } from './utils/config.js';
+import { saveBaseline, applyBaseline } from './utils/baseline.js';
 
 export async function cli(args = []) {
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
@@ -13,7 +16,7 @@ export async function cli(args = []) {
   }
 
   if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
-    console.log('authwarden v1.1.1');
+    console.log('authwarden v1.2.0');
     return 0;
   }
 
@@ -28,7 +31,7 @@ export async function cli(args = []) {
   }
 
   // Parse options and positional target argument
-  const valFlags = new Set(['--format', '--output', '--fail-on']);
+  const valFlags = new Set(['--format', '--output', '--fail-on', '--baseline', '--save-baseline', '--config']);
   const positionals = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -44,14 +47,29 @@ export async function cli(args = []) {
   }
 
   const targetDir = positionals[0] || process.env.INPUT_PATH || '.';
+  const customConfigPath = getArgValue(args, '--config');
+  const { config } = loadConfig(customConfigPath || targetDir);
+
   const isStaged = args.includes('--staged') || process.env.INPUT_STAGED === 'true';
+  const isWatch = args.includes('--watch') || config.watch === true;
+
   const options = {
-    verify: args.includes('--verify') || process.env.INPUT_VERIFY === 'true',
+    verify: args.includes('--verify') || process.env.INPUT_VERIFY === 'true' || config.verify === true,
     staged: isStaged,
-    format: getArgValue(args, '--format') || process.env.INPUT_FORMAT || 'terminal',
-    output: getArgValue(args, '--output') || process.env.INPUT_OUTPUT || null,
-    failOn: getArgValue(args, '--fail-on') || process.env['INPUT_FAIL-ON'] || process.env.INPUT_FAIL_ON || 'high'
+    watch: isWatch,
+    format: getArgValue(args, '--format') || process.env.INPUT_FORMAT || config.format || 'terminal',
+    output: getArgValue(args, '--output') || process.env.INPUT_OUTPUT || config.output || null,
+    failOn: getArgValue(args, '--fail-on') || process.env['INPUT_FAIL-ON'] || process.env.INPUT_FAIL_ON || config.failOn || 'high',
+    baseline: getArgValue(args, '--baseline') || config.baseline || null,
+    saveBaseline: getArgValue(args, '--save-baseline') || null,
+    ignoreRules: config.ignoreRules || [],
+    ignorePaths: config.ignorePaths || [],
+    rulesDir: config.rulesDir || null
   };
+
+  if (options.watch) {
+    return startWatchMode(targetDir, options);
+  }
 
   if (isStaged) {
     const stagedFiles = getGitChangedFiles(targetDir, { stagedOnly: true });
@@ -67,6 +85,20 @@ export async function cli(args = []) {
   try {
     const scanResult = await runScan(targetDir, options);
 
+    // Save baseline mode
+    if (options.saveBaseline) {
+      const savedPath = saveBaseline(options.saveBaseline, scanResult.findings, scanResult.stats);
+      console.log(colors.green(`✔ Saved ${scanResult.findings.length} finding(s) to baseline: ${savedPath}`));
+      return 0;
+    }
+
+    // Apply existing baseline (suppress historical findings)
+    if (options.baseline) {
+      const { newFindings, suppressedCount } = applyBaseline(scanResult.findings, options.baseline);
+      scanResult.findings = newFindings;
+      scanResult.suppressedBaselineCount = suppressedCount;
+    }
+
     // Output formatting
     let outputText = '';
     if (options.format === 'sarif') {
@@ -75,6 +107,8 @@ export async function cli(args = []) {
       outputText = generateMarkdown(scanResult);
     } else if (options.format === 'json') {
       outputText = generateJson(scanResult);
+    } else if (options.format === 'html') {
+      outputText = generateHtml(scanResult);
     } else {
       printTerminalReport(scanResult);
     }
@@ -84,6 +118,16 @@ export async function cli(args = []) {
       console.log(colors.green(`Report saved to ${options.output}`));
     } else if (options.format !== 'terminal' && outputText) {
       console.log(outputText);
+    }
+
+    // Automatic GitHub Step Summary in GitHub Actions
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      try {
+        const summaryText = generateMarkdown(scanResult);
+        fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n\n${summaryText}\n`, 'utf8');
+      } catch {
+        // ignore if not writable
+      }
     }
 
     // Exit code evaluation
@@ -99,6 +143,58 @@ export async function cli(args = []) {
   } catch (err) {
     console.error(colors.red(`Error during scan: ${err.message}`));
     return 2;
+  }
+}
+
+async function startWatchMode(targetDir, options) {
+  console.log(colors.cyan(colors.bold(`\n👁️  AuthWarden Watch Mode Active`)));
+  console.log(colors.gray(`Watching ${path.resolve(targetDir)} ... (Press Ctrl+C to stop)\n`));
+
+  let isScanning = false;
+  let debounceTimer = null;
+
+  async function triggerScan() {
+    if (isScanning) return;
+    isScanning = true;
+    try {
+      console.clear();
+      console.log(colors.gray(`[${new Date().toLocaleTimeString()}] File change detected, re-scanning...`));
+      const res = await runScan(targetDir, options);
+      if (options.baseline) {
+        const { newFindings, suppressedCount } = applyBaseline(res.findings, options.baseline);
+        res.findings = newFindings;
+        res.suppressedBaselineCount = suppressedCount;
+      }
+      printTerminalReport(res);
+    } catch (e) {
+      console.error(colors.red(`Scan error: ${e.message}`));
+    } finally {
+      isScanning = false;
+    }
+  }
+
+  // Initial scan
+  await triggerScan();
+
+  try {
+    const watcher = fs.watch(path.resolve(targetDir), { recursive: true }, (eventType, filename) => {
+      if (!filename) return;
+      if (filename.includes('node_modules') || filename.includes('.git') || filename.endsWith('.sarif') || filename.endsWith('.json') || filename.endsWith('.html')) {
+        return;
+      }
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(triggerScan, 150);
+    });
+
+    return new Promise(() => {
+      process.on('SIGINT', () => {
+        watcher.close();
+        process.exit(0);
+      });
+    });
+  } catch (err) {
+    console.error(colors.red(`Watch mode error: ${err.message}`));
+    return 1;
   }
 }
 
@@ -122,18 +218,25 @@ ${colors.bold('USAGE:')}
   authwarden rules
 
 ${colors.bold('OPTIONS:')}
-  --staged            Scan only staged git changes (fast for pre-commit hooks)
-  --verify            Safely verify detected secrets against live APIs (e.g. Stripe, GitHub)
-  --format <type>     Output format: terminal (default), sarif, markdown, json
+  --watch             Continuous watch mode: re-scans instantly upon file save
+  --format <type>     Output format: terminal (default), html, sarif, markdown, json
   --output <file>     Write report output to specified file
   --fail-on <level>   Threshold to exit with status 1: critical, high (default), medium, low
+  --baseline <file>   Filter out historical findings from baseline file
+  --save-baseline <f> Save current scan findings to baseline snapshot file
+  --config <file>     Path to custom configuration file (.authwardenrc.json)
+  --staged            Scan only staged git changes (fast for pre-commit hooks)
+  --verify            Safely verify detected secrets against live APIs (Stripe, GitHub, OpenAI, Anthropic, Slack)
   -v, --version       Show version number
   -h, --help          Show this help message
 
 ${colors.bold('EXAMPLES:')}
   $ npx authwarden scan .
+  $ npx authwarden scan . --watch
+  $ npx authwarden scan . --format html --output report.html
+  $ npx authwarden scan . --save-baseline .authwarden-baseline.json
+  $ npx authwarden scan . --baseline .authwarden-baseline.json
   $ npx authwarden scan . --verify
-  $ npx authwarden scan --format sarif --output results.sarif .
   $ npx authwarden scan --staged
   $ npx authwarden init-hook
 `);

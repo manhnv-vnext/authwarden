@@ -102,8 +102,8 @@ export async function runScan(targetPath = '.', options = {}) {
     allFindings.push(...specFindings);
   }
 
-  // 10. Custom Organization Rules Loader (from rules/*.json if present)
-  const rulesDir = path.resolve(rootDir, 'rules');
+  // 10. Custom Organization Rules Loader (from rules/*.json or options.rulesDir)
+  const rulesDir = path.resolve(rootDir, options.rulesDir || 'rules');
   if (fs.existsSync(rulesDir)) {
     try {
       const ruleFiles = fs.readdirSync(rulesDir).filter(f => f.endsWith('.json'));
@@ -145,9 +145,19 @@ export async function runScan(targetPath = '.', options = {}) {
     }
   }
 
-  // 11. Filter out findings suppressed via inline comments (e.g. // authwarden-disable-line)
+  // 11. Filter out findings by ignoreRules, ignorePaths, or inline comments
+  const ignoredRules = options.ignoreRules && Array.isArray(options.ignoreRules) ? new Set(options.ignoreRules) : null;
+  const ignoredPaths = options.ignorePaths && Array.isArray(options.ignorePaths) ? options.ignorePaths.map(p => p.replace(/\\/g, '/')) : null;
+
   const fileLinesCache = new Map();
   const activeFindings = allFindings.filter(f => {
+    if (ignoredRules && ignoredRules.has(f.ruleId)) {
+      return false;
+    }
+    if (ignoredPaths && ignoredPaths.some(p => f.file.includes(p) || f.file.startsWith(p))) {
+      return false;
+    }
+
     try {
       const fullPath = path.resolve(rootDir, f.file);
       if (!fs.existsSync(fullPath)) return true;

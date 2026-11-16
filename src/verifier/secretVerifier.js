@@ -73,6 +73,37 @@ export async function verifySecret(finding) {
       if (res.status === 200) return { verified: true, message: 'Active OpenAI Key (200 OK)' };
       if (res.status === 401) return { verified: false, message: 'Invalid / Expired OpenAI Key' };
     }
+
+    // 4. Anthropic API Key
+    if (finding.secretType === 'anthropic_key') {
+      const res = await checkHttps({
+        hostname: 'api.anthropic.com',
+        path: '/v1/models',
+        method: 'GET',
+        headers: {
+          'x-api-key': secret,
+          'anthropic-version': '2023-06-01',
+          'User-Agent': 'AuthWarden-Scanner'
+        }
+      });
+      if (res.status === 200) return { verified: true, message: 'Active Anthropic Key (200 OK)' };
+      if (res.status === 401) return { verified: false, message: 'Invalid / Revoked Anthropic Key' };
+    }
+
+    // 5. Slack Bot / User Token
+    if (finding.secretType === 'slack_token' && secret.startsWith('xoxb-')) {
+      const res = await checkHttps({
+        hostname: 'slack.com',
+        path: '/api/auth.test',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${secret}`,
+          'User-Agent': 'AuthWarden-Scanner'
+        }
+      });
+      if (res.status === 200) return { verified: true, message: 'Active Slack Token (200 OK)' };
+      if (res.status === 401 || res.status === 403) return { verified: false, message: 'Invalid / Revoked Slack Token' };
+    }
   } catch {
     return null;
   }
