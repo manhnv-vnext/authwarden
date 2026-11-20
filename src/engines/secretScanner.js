@@ -134,7 +134,7 @@ export function scanSecrets(file) {
       }
 
       // Filter out obvious documentation or dummy examples
-      if (/example|dummy|placeholder|your_key|my_secret|12345678/i.test(secretValue)) {
+      if (/example|dummy|placeholder|your_key|my_secret|12345678/i.test(secretValue) || /X{6,}/.test(secretValue)) {
         continue;
       }
 

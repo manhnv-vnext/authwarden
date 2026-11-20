@@ -19,6 +19,7 @@ const LOGIC_RULES = [
     remediation: 'Enforce a server-side state machine. Never allow client payloads to set payment or approval status directly.',
     test: (line, content) => {
       if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
+      if (/^\s*['"`]/.test(line) || /(?:vulnerableCode|content|example|sample|snippet|pattern|description|hypothesis|title|lineNumber|isTarget)\s*[:=]/i.test(line)) return false;
       return /(?:req\.body\.(?:is_?paid|payment_?status|approved|is_?verified)|order\.(?:isPaid|status)\s*=\s*req\.body)/i.test(line);
     }
   },
@@ -65,6 +66,7 @@ const LOGIC_RULES = [
     test: (line, content) => {
       if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
       return /(?:router|app)\.(?:post|get)\s*\(\s*['"]\/(?:api\/)?(?:auth\/)?(?:log(?:out|off|in-out)|sign(?:out|-out))/i.test(line) &&
+        !content.includes('logout(') && !content.includes('handleLogout') && !content.includes('invalidate') &&
         !content.includes('revoke') && !content.includes('blacklist') && !content.includes('destroy') && !content.includes('deleteSession');
     }
   }

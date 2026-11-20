@@ -66,7 +66,7 @@ export const SAST_RULES = [
     cwe: 'CWE-22',
     owasp: 'A01:2021-Broken Access Control',
     languages: ['.js', '.ts', '.py', '.php'],
-    regex: /(?:\bfs\.(?:readFile|readFileSync|createReadStream)|(?<![\w$.])(?:include|include_once|require|require_once|open)|\bfile_get_contents|\bfopen)\s*\(?\s*[^;]*?(?:\breq\.(?:query|body|params)\b|\$_(?:GET|POST|REQUEST)\b|\brequest\.(?:args|GET|POST)\b)/i,
+    regex: /(?:\bfs\.(?:readFile|readFileSync|createReadStream)|(?<![\w$.])(?:include|include_once|require|require_once)\s*\(|\bfile_get_contents|\bfopen)\s*\(?\s*[^;]*?(?:\breq\.(?:query|body|params)\b|\$_(?:GET|POST|REQUEST)\b|\brequest\.(?:args|GET|POST)\b)/i,
     description: 'Constructing file paths directly from user input allows reading arbitrary system or sensitive files (e.g. /etc/passwd, .env).',
     remediation: 'Validate input against an allowlist, use `path.basename()`, and ensure the resolved path stays within the intended base directory.'
   },
@@ -105,7 +105,7 @@ export const SAST_RULES = [
     cwe: 'CWE-295',
     owasp: 'A05:2021-Security Misconfiguration',
     languages: ['.js', '.ts', '.py'],
-    regex: /(?:NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]0['"]|verify\s*=\s*False|rejectUnauthorized\s*:\s*false)/i,
+    regex: /(?:NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]0['"]|\bverify\s*=\s*False\b|rejectUnauthorized\s*:\s*false)/i,
     description: 'Disabling SSL/TLS certificate validation exposes network communications to Man-in-the-Middle (MitM) eavesdropping.',
     remediation: 'Never disable TLS verification in production. Install valid CA certificates.'
   },
@@ -208,6 +208,13 @@ export function scanSAST(file) {
       const line = lines[i];
       const trimmed = line.trim();
       if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+        continue;
+      }
+
+      if (rule.id === 'SAST-006' && /DOMPurify\.sanitize/i.test(line)) {
+        continue;
+      }
+      if (rule.id === 'SAST-009' && (/^\s*['"`]/.test(line) || /^\s*(?:description|hypothesis|message|summary|detail|doc|comment|prompt|title)\w*\s*[:=]/i.test(line))) {
         continue;
       }
 

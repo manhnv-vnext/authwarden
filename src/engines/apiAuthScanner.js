@@ -33,7 +33,8 @@ const AUTH_MIDDLEWARE_SIGNALS = [
   /current_user/i,
   /get_current_user/i,
   /depends\(.*auth/i,
-  /security/i
+  /security/i,
+  /(?:require|ensure|is|check)(?:org|user|admin|role|perm|platform|member|auth|access)/i
 ];
 
 const RATE_LIMIT_SIGNALS = [
@@ -145,7 +146,7 @@ export function scanApiAuth(file) {
 
       const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(routePath));
       const hasAuth = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(middlewareChain));
-      const isLoginOrAuth = /login|signin|auth\/token|password\/reset/i.test(routePath);
+      const isLoginOrAuth = /(?:^|\/)(?:auth\/)?(?:login|signin|token|authenticate|password\/reset)(?:\/|$)/i.test(routePath) && !/crawl|operator|live-login/i.test(routePath);
       const hasRateLimit = RATE_LIMIT_SIGNALS.some(s => s.test(middlewareChain) || s.test(content));
 
       if (isAdmin && !hasAuth) {
@@ -213,7 +214,9 @@ export function scanApiAuth(file) {
       const contextBlock = lines.slice(Math.max(0, i - 10), Math.min(lines.length, i + 15)).join('\n');
       const hasOwnerCheck = /user_id|userId|tenant_id|tenantId|owner_id|ownerId|org_id|accountId|req\.user|current_user/i.test(contextBlock);
 
-      if (!hasOwnerCheck && !line.includes('//') && !line.includes('#')) {
+      if (!hasOwnerCheck && !line.includes('//') && !line.includes('#') &&
+          !/^\s*['"`]/.test(line) &&
+          !/(?:vulnerableCode|content|example|sample|snippet|pattern|description|hypothesis|title|lineNumber|isTarget)\s*[:=]/i.test(line)) {
         findings.push({
           ruleId: 'AUTH-003',
           severity: 'HIGH',
@@ -228,7 +231,10 @@ export function scanApiAuth(file) {
     }
 
     // Pattern: Mass Assignment
-    if (/(?:\.create|\.update|\.insert)\s*\(\s*(?:req\.body|request\.body|params)\s*\)/i.test(line)) {
+    if (!/^\s*(?:description|hypothesis|message|summary|detail|doc|comment|prompt|title)\w*\s*[:=]/i.test(line) &&
+        !/^\s*['"`]/.test(line) &&
+        !line.trim().startsWith('//') && !line.trim().startsWith('*') &&
+        /(?:\.create|\.update|\.insert)\s*\(\s*(?:req\.body|request\.body|params)\s*\)/i.test(line)) {
       findings.push({
         ruleId: 'AUTH-005',
         severity: 'MEDIUM',

@@ -76,6 +76,19 @@ function matchesGitignore(relPath, fileName, isDir, rules) {
   return false;
 }
 
+export function matchesPathPattern(filePath, pattern) {
+  const normFile = (filePath || '').replace(/\\/g, '/');
+  const cleanPat = (pattern || '').replace(/\\/g, '/').replace(/^\//, '');
+  const prefix = cleanPat.replace(/\/\*\*?$/, '');
+  if (cleanPat.endsWith('/**') || cleanPat.endsWith('/*')) {
+    return normFile === prefix || normFile.startsWith(prefix + '/');
+  }
+  if (cleanPat.startsWith('*.')) {
+    return normFile.endsWith(cleanPat.slice(1));
+  }
+  return normFile === cleanPat || normFile.startsWith(cleanPat + '/') || normFile.includes('/' + cleanPat + '/') || normFile.includes(cleanPat);
+}
+
 export function walkDirectory(targetDir, options = {}) {
   const files = [];
   const root = path.resolve(targetDir);
@@ -83,6 +96,9 @@ export function walkDirectory(targetDir, options = {}) {
   if (!fs.existsSync(root)) {
     throw new Error(`Target path does not exist: ${targetDir}`);
   }
+
+  const ignorePatterns = (options.ignorePaths || []).map(p => p.trim()).filter(Boolean);
+  const isIgnored = (relPath) => ignorePatterns.some(p => matchesPathPattern(relPath, p));
 
   const rootStat = fs.statSync(root);
   if (rootStat.isFile()) {
@@ -118,12 +134,13 @@ export function walkDirectory(targetDir, options = {}) {
       const relativePath = path.relative(root, fullPath);
 
       if (entry.isDirectory()) {
-        if (!DEFAULT_IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.git')) {
+        if (!DEFAULT_IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.git') && !isIgnored(relativePath)) {
           if (!matchesGitignore(relativePath, entry.name, true, gitignoreRules)) {
             recurse(fullPath);
           }
         }
       } else if (entry.isFile() || entry.isSymbolicLink()) {
+        if (isIgnored(relativePath)) continue;
         const lowerName = entry.name.toLowerCase();
         if (DEFAULT_IGNORED_FILES.has(lowerName)) continue;
 

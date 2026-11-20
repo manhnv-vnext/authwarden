@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import { walkDirectory } from './utils/fileWalker.js';
+import { walkDirectory, matchesPathPattern } from './utils/fileWalker.js';
 import { scanApiAuth } from './engines/apiAuthScanner.js';
 import { scanSecrets } from './engines/secretScanner.js';
 import { scanIaC } from './engines/iacScanner.js';
@@ -154,7 +154,7 @@ export async function runScan(targetPath = '.', options = {}) {
     if (ignoredRules && ignoredRules.has(f.ruleId)) {
       return false;
     }
-    if (ignoredPaths && ignoredPaths.some(p => f.file.includes(p) || f.file.startsWith(p))) {
+    if (ignoredPaths && ignoredPaths.some(p => matchesPathPattern(f.file, p))) {
       return false;
     }
 
