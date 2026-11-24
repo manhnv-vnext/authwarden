@@ -54,6 +54,15 @@ export async function runScan(targetPath = '.', options = {}) {
     if (/(?:openapi|swagger|api-docs)[^/]*\.(?:json|ya?ml)$/i.test(f.name)) {
       frameworks.add('OpenAPI / Swagger');
     }
+    if (f.name === 'pubspec.yaml' || f.name === 'pubspec.lock' || f.ext === '.dart') {
+      frameworks.add('Flutter / Dart');
+    }
+    if (f.name === 'AndroidManifest.xml' || f.name.endsWith('.gradle')) {
+      frameworks.add('Android');
+    }
+    if (f.name === 'Info.plist' || f.name === 'Podfile' || f.name.endsWith('.pbxproj')) {
+      frameworks.add('iOS');
+    }
   }
 
   const allFindings = [];

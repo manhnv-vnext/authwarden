@@ -358,6 +358,8 @@ AuthWarden ships with 45+ precision rules across 8 security categories:
 | **SCA & CVE** | Reachability | Imported vs Dormant Dependency Vulnerability Tagging | `INFO` |
 | **Supply Chain** | `SUPPLY-001`| Suspicious Outbound Script in Package Lifecycle Hook | `CRITICAL` |
 | **Supply Chain** | `SUPPLY-002`| Unpinned Git Repository Dependency | `HIGH` |
+| **Mobile Security** | `MOBILE-001`| Insecure Cleartext HTTP Traffic Allowed (Android / iOS ATS) | `HIGH` |
+| **Mobile Security** | `MOBILE-002`| Broad External Storage Permission Requested in AndroidManifest | `MEDIUM` |
 
 ---
 

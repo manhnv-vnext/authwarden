@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { execFileSync } from 'child_process';
 import { cli } from '../src/cli.js';
 
 test('cli handles --version and --help', async () => {
@@ -101,3 +102,16 @@ test('cli handles --save-baseline and --baseline in workflow', async () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+test('cli scans zip archives automatically and cleans up temporary folder', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-cli-zip-'));
+  const testFile = path.join(tmpDir, 'test.js');
+  fs.writeFileSync(testFile, 'console.log("clean");');
+
+  const zipFile = path.join(tmpDir, 'project.zip');
+  execFileSync('zip', ['-q', '-j', zipFile, testFile]);
+
+  const exitCode = await cli(['scan', zipFile, '--format', 'json']);
+  assert.equal(exitCode, 0);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

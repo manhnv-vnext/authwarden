@@ -80,3 +80,48 @@ services:
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('flags insecure cleartext traffic in Android network security config and manifest', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-mobile-'));
+  const netSecFile = path.join(tmpDir, 'network_security_config.xml');
+  const manifestFile = path.join(tmpDir, 'AndroidManifest.xml');
+
+  fs.writeFileSync(netSecFile, '<network-security-config>\n  <base-config cleartextTrafficPermitted="true" />\n</network-security-config>');
+  fs.writeFileSync(manifestFile, '<manifest><application android:usesCleartextTraffic="true">\n<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n</application></manifest>');
+
+  const netSecFindings = scanIaC({
+    path: netSecFile,
+    relative: 'res/xml/network_security_config.xml',
+    name: 'network_security_config.xml',
+    ext: '.xml'
+  });
+  assert.equal(netSecFindings.some(f => f.ruleId === 'MOBILE-001'), true);
+
+  const manifestFindings = scanIaC({
+    path: manifestFile,
+    relative: 'android/AndroidManifest.xml',
+    name: 'AndroidManifest.xml',
+    ext: '.xml'
+  });
+  assert.equal(manifestFindings.some(f => f.ruleId === 'MOBILE-001'), true);
+  assert.equal(manifestFindings.some(f => f.ruleId === 'MOBILE-002'), true);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('flags ATS NSAllowsArbitraryLoads in iOS Info.plist', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-ios-'));
+  const plistFile = path.join(tmpDir, 'Info.plist');
+
+  fs.writeFileSync(plistFile, '<dict>\n  <key>NSAllowsArbitraryLoads</key>\n  <true/>\n</dict>');
+
+  const findings = scanIaC({
+    path: plistFile,
+    relative: 'ios/Runner/Info.plist',
+    name: 'Info.plist',
+    ext: '.plist'
+  });
+  assert.equal(findings.some(f => f.ruleId === 'MOBILE-001'), true);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

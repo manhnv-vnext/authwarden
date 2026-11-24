@@ -205,5 +205,78 @@ export function scanIaC(file) {
     }
   }
 
+  // 5. Mobile App Security Manifests & Configurations
+  // Android Network Security Config
+  if (fileName === 'network_security_config.xml' || fileName === 'network-security-config.xml' || (relPath.includes('res/xml') && fileName.endsWith('.xml'))) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/cleartextTrafficPermitted\s*=\s*['"]true['"]/i.test(line)) {
+        findings.push({
+          ruleId: 'MOBILE-001',
+          severity: 'HIGH',
+          title: 'Insecure Cleartext Traffic Allowed in Android Network Security Config',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'Android Network Security Configuration explicitly permits unencrypted cleartext HTTP traffic across the network, exposing API requests and tokens to Man-in-the-Middle (MitM) eavesdropping.',
+          remediation: 'Set `cleartextTrafficPermitted="false"` and enforce TLS/HTTPS for all network domains.'
+        });
+      }
+    }
+  }
+
+  // AndroidManifest.xml
+  if (fileName === 'androidmanifest.xml') {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/android:usesCleartextTraffic\s*=\s*['"]true['"]/i.test(line)) {
+        findings.push({
+          ruleId: 'MOBILE-001',
+          severity: 'HIGH',
+          title: 'Insecure Cleartext Traffic Allowed in AndroidManifest.xml',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'AndroidManifest.xml explicitly enables `android:usesCleartextTraffic="true"`, allowing unencrypted HTTP calls across the entire application.',
+          remediation: 'Disable cleartext traffic (`android:usesCleartextTraffic="false"`) and use HTTPS.'
+        });
+      }
+      if (/android\.permission\.(?:WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE)/i.test(line) && !line.includes('maxSdkVersion')) {
+        findings.push({
+          ruleId: 'MOBILE-002',
+          severity: 'MEDIUM',
+          title: 'Broad External Storage Permission Requested in AndroidManifest.xml',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'Requesting unrestricted external storage permissions allows other applications with storage access to read or tamper with app files.',
+          remediation: 'Adopt Scoped Storage (`getExternalFilesDir()`) or specify `android:maxSdkVersion="32"` for backward compatibility.'
+        });
+      }
+    }
+  }
+
+  // iOS Info.plist App Transport Security (ATS)
+  if (fileName === 'info.plist') {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/<key>\s*NSAllowsArbitraryLoads\s*<\/key>/i.test(line)) {
+        const nextLines = lines.slice(i, Math.min(lines.length, i + 3)).join(' ');
+        if (/<true\s*\/>/i.test(nextLines)) {
+          findings.push({
+            ruleId: 'MOBILE-001',
+            severity: 'HIGH',
+            title: 'iOS App Transport Security (ATS) Disabled (NSAllowsArbitraryLoads)',
+            file: relPath,
+            line: i + 1,
+            snippet: line.trim(),
+            description: '`NSAllowsArbitraryLoads` is set to `true` in Info.plist, completely disabling iOS App Transport Security (ATS) enforcement and allowing cleartext HTTP.',
+            remediation: 'Enforce ATS with HTTPS. Remove `NSAllowsArbitraryLoads` or specify domain-specific exceptions only where strictly necessary.'
+          });
+        }
+      }
+    }
+  }
+
   return findings;
 }

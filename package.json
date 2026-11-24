@@ -1,6 +1,6 @@
 {
   "name": "authwarden-cli",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Lightning-fast Static API & Authorization Vulnerability Scanner for Modern Web & Cloud",
   "main": "src/index.js",
   "exports": "./src/index.js",

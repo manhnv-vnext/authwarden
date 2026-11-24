@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { execFileSync } from 'child_process';
 import { runScan } from './index.js';
 import { printTerminalReport } from './reporters/terminalReporter.js';
 import { generateSarif, generateMarkdown, generateJson } from './reporters/sarifReporter.js';
@@ -16,7 +18,7 @@ export async function cli(args = []) {
   }
 
   if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
-    console.log('authwarden v1.2.0');
+    console.log('authwarden v1.2.1');
     return 0;
   }
 
@@ -46,7 +48,20 @@ export async function cli(args = []) {
     positionals.push(arg);
   }
 
-  const targetDir = positionals[0] || process.env.INPUT_PATH || '.';
+  let targetDir = positionals[0] || process.env.INPUT_PATH || '.';
+  let tempZipDir = null;
+
+  if (targetDir.toLowerCase().endsWith('.zip') && fs.existsSync(targetDir)) {
+    try {
+      tempZipDir = fs.mkdtempSync(path.join(os.tmpdir(), 'authwarden-unzip-'));
+      execFileSync('unzip', ['-q', path.resolve(targetDir), '-d', tempZipDir]);
+      targetDir = tempZipDir;
+    } catch (err) {
+      console.error(colors.red(`Failed to extract zip archive: ${err.message}`));
+      return 2;
+    }
+  }
+
   const customConfigPath = getArgValue(args, '--config');
   const { config } = loadConfig(customConfigPath || targetDir);
 
@@ -143,6 +158,14 @@ export async function cli(args = []) {
   } catch (err) {
     console.error(colors.red(`Error during scan: ${err.message}`));
     return 2;
+  } finally {
+    if (tempZipDir && fs.existsSync(tempZipDir)) {
+      try {
+        fs.rmSync(tempZipDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup error
+      }
+    }
   }
 }
 
@@ -344,6 +367,10 @@ ${colors.bold('SCA & KNOWN CVE VULNERABILITIES:')}
   • ${colors.bold('Reachability')} AST-guided Reachability Analysis (Flags Imported vs Dormant Vulnerabilities)
   • ${colors.yellow('SUPPLY-001')} Lifecycle Script Exfiltration Risk in package.json
   • ${colors.blue('SUPPLY-002')} Unpinned Git Repository Dependency
+
+${colors.bold('MOBILE APPLICATION SECURITY:')}
+  • ${colors.yellow('MOBILE-001')} Insecure Cleartext Traffic Allowed (Android Network Security Config / iOS ATS)
+  • ${colors.blue('MOBILE-002')} Broad External Storage Permission Requested in AndroidManifest
 `);
   return 0;
 }
