@@ -66,7 +66,7 @@ export const SAST_RULES = [
     cwe: 'CWE-22',
     owasp: 'A01:2021-Broken Access Control',
     languages: ['.js', '.ts', '.py', '.php', '.cs'],
-    regex: /(?:\bfs\.(?:readFile|readFileSync|createReadStream)|(?<![\w$.])(?:include|include_once|require|require_once)\s*\(|\bfile_get_contents|\bfopen|\bFile\.(?:ReadAllText|ReadAllBytes|OpenRead|OpenWrite))\s*\(?\s*[^;]*?(?:\breq\.(?:query|body|params)\b|\$_(?:GET|POST|REQUEST)\b|\brequest\.(?:args|GET|POST)\b|\b\w*(?:fileName|filePath|path|file)\b)/i,
+    regex: /(?:\bfs\.(?:readFile|readFileSync|createReadStream)|(?<![\w$.])(?:include|include_once|require|require_once)\s*\(|\bfile_get_contents|\bfopen)\s*\(?\s*[^;]*?(?:\breq\.(?:query|body|params)\b|\$_(?:GET|POST|REQUEST)\b|\brequest\.(?:args|GET|POST)\b)|\bFile\.(?:ReadAllText|ReadAllBytes|OpenRead|OpenWrite)\s*\([^;]*?(?:\b(?:input|filePath|userPath|fileName|clientPath)\b|\brequest\.)/i,
     description: 'Constructing file paths directly from user input allows reading arbitrary system or sensitive files (e.g. /etc/passwd, .env).',
     remediation: 'Validate input against an allowlist, use `path.basename()`, and ensure the resolved path stays within the intended base directory.'
   },
@@ -207,7 +207,7 @@ export function scanSAST(file) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const trimmed = line.trim();
-      if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+      if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('/*') || trimmed.startsWith('*') || /^\s*(?:regex|pattern)\s*[:=]/i.test(line)) {
         continue;
       }
 
