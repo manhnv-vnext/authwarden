@@ -205,14 +205,127 @@ export function scanApiAuth(file) {
     }
   }
 
+  // 5. C# / ASP.NET Core Controllers & Minimal APIs
+  if (file.ext === '.cs') {
+    const isController = /class\s+\w+Controller\b|:\s*(?:ControllerBase|Controller)\b|\[ApiController\]/.test(content);
+    if (isController) {
+      const classRouteMatch = content.match(/\[Route\(\s*["']([^"']+)["']\s*\)\]/i);
+      const classRoute = classRouteMatch ? classRouteMatch[1] : '';
+      const classHeader = content.slice(0, content.indexOf('class '));
+      const classHasAuthorize = /\[Authorize(?:\([^)]*\))?\]/i.test(classHeader);
+
+      const actionRegex = /\[(HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch|Route)(?:\(\s*["']?([^"')\s]*)["']?\s*\))?\](?:\s*\[[^\]]+\])*\s*(?:public|protected)\s+(?:async\s+)?(?:Task<[A-Za-z0-9_<>,\s]+>|[A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g;
+      let actMatch;
+      while ((actMatch = actionRegex.exec(content)) !== null) {
+        const httpAttr = actMatch[1];
+        const subRoute = actMatch[2] || '';
+        const actionName = actMatch[3];
+        const methodParams = actMatch[4] || '';
+        const methodLineNo = content.slice(0, actMatch.index).split('\n').length;
+        const method = httpAttr === 'Route' ? 'ANY' : httpAttr.replace(/^Http/, '').toUpperCase();
+
+        const fullRoute = ('/' + classRoute + '/' + subRoute).replace(/\/+/g, '/').replace(/\/$/, '');
+        const methodAttributes = content.slice(Math.max(0, actMatch.index - 300), actMatch.index);
+        const methodHasAuthorize = /\[Authorize(?:\([^)]*\))?\]/i.test(methodAttributes);
+        const methodHasAllowAnonymous = /\[AllowAnonymous\]/i.test(methodAttributes);
+
+        const isAuthorized = (classHasAuthorize || methodHasAuthorize) && !methodHasAllowAnonymous;
+        const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(fullRoute)) || /admin/i.test(actionName);
+
+        if (isAdmin && !isAuthorized) {
+          findings.push({
+            ruleId: 'AUTH-001',
+            severity: 'CRITICAL',
+            title: `ASP.NET Core Admin Endpoint Missing [Authorize]: ${method} ${fullRoute || actionName}`,
+            file: relPath,
+            line: methodLineNo,
+            snippet: lines[methodLineNo - 1]?.trim(),
+            description: `Action "${actionName}" at route "${fullRoute}" contains administrative keywords but lacks the [Authorize] attribute, allowing unauthenticated caller access.`,
+            remediation: `Add [Authorize] or [Authorize(Roles = "Admin")] attribute to the action method or controller class.`
+          });
+        }
+
+        if (!isAuthorized && ['POST', 'PUT', 'DELETE'].includes(method)) {
+          if (!/login|register|signup|forgot|webhook|callback|health|auth/i.test(fullRoute + actionName)) {
+            findings.push({
+              ruleId: 'AUTH-002',
+              severity: 'HIGH',
+              title: `State-Modifying ASP.NET Core Route Without [Authorize]: ${method} ${fullRoute || actionName}`,
+              file: relPath,
+              line: methodLineNo,
+              snippet: lines[methodLineNo - 1]?.trim(),
+              description: `State-altering endpoint "${method} ${fullRoute || actionName}" lacks [Authorize] attribute. Attackers can execute mutations anonymously.`,
+              remediation: `Decorate the endpoint with [Authorize].`
+            });
+          }
+        }
+
+        if (/\[FromBody\]\s*(?:User|Account|Order|Payment|Role|Permission)\b|\b(?:User|Account|Order|Payment|Role|Permission)\s+[a-z]\w*(?:\s*,|\s*\))/i.test(methodParams) &&
+            !/DTO|Request|Model|Input|Vm/i.test(methodParams)) {
+          findings.push({
+            ruleId: 'AUTH-005',
+            severity: 'MEDIUM',
+            title: `Mass Assignment Risk in ASP.NET Core Controller: ${actionName}()`,
+            file: relPath,
+            line: methodLineNo,
+            snippet: lines[methodLineNo - 1]?.trim(),
+            description: `Action binds request body directly to a core database entity type. Attackers can tamper with sensitive model properties (e.g. IsAdmin, Role, Balance).`,
+            remediation: `Use dedicated Input/DTO classes instead of direct entity binding, or specify [Bind("AllowedProp1,AllowedProp2")].`
+          });
+        }
+      }
+    }
+  }
+
+  // 6. Java Spring Boot Controllers
+  if (file.ext === '.java') {
+    const isSpringController = /@RestController|@Controller/.test(content);
+    if (isSpringController) {
+      const classMappingMatch = content.match(/@RequestMapping\(\s*(?:value\s*=\s*)?["']([^"']+)["']/i);
+      const classRoute = classMappingMatch ? classMappingMatch[1] : '';
+      const classHeader = content.slice(0, content.indexOf('class '));
+      const classHasAuth = /@PreAuthorize|@Secured|@RolesAllowed/.test(classHeader);
+
+      const methodRegex = /@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)(?:\(\s*(?:value\s*=\s*)?["']([^"']+)["']\s*\))?(?:\s*@[A-Za-z0-9_]+(?:\([^)]*\))?)*\s*(?:public|protected)\s+(?:ResponseEntity<[A-Za-z0-9_<>,\s]+>|[A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)/g;
+      let jMatch;
+      while ((jMatch = methodRegex.exec(content)) !== null) {
+        const ann = jMatch[1];
+        const subRoute = jMatch[2] || '';
+        const methodName = jMatch[3];
+        const methodLineNo = content.slice(0, jMatch.index).split('\n').length;
+        const method = ann === 'RequestMapping' ? 'ANY' : ann.replace(/Mapping$/, '').toUpperCase();
+
+        const fullRoute = ('/' + classRoute + '/' + subRoute).replace(/\/+/g, '/').replace(/\/$/, '');
+        const methodAttributes = content.slice(Math.max(0, jMatch.index - 250), jMatch.index);
+        const methodHasAuth = /@PreAuthorize|@Secured|@RolesAllowed/.test(methodAttributes);
+
+        const isAuthorized = classHasAuth || methodHasAuth;
+        const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(fullRoute)) || /admin/i.test(methodName);
+
+        if (isAdmin && !isAuthorized) {
+          findings.push({
+            ruleId: 'AUTH-001',
+            severity: 'CRITICAL',
+            title: `Spring Boot Admin Endpoint Missing Security Annotation: ${method} ${fullRoute || methodName}`,
+            file: relPath,
+            line: methodLineNo,
+            snippet: lines[methodLineNo - 1]?.trim(),
+            description: `Spring Boot endpoint "${methodName}" at route "${fullRoute}" contains administrative keywords but lacks @PreAuthorize or @Secured annotation.`,
+            remediation: `Add @PreAuthorize("hasRole('ADMIN')") to the method or class.`
+          });
+        }
+      }
+    }
+  }
+
   // 5. BOLA / IDOR Pattern & Sensitive Data Exposure
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     
-    // Pattern: findById(req.params.id) without owner check
-    if (/(?:findById|findByPk|filter_by\(id=|\.filter\([a-zA-Z_]+\.id\s*==\s*id)\s*\(/i.test(line)) {
+    // Pattern: findById(req.params.id) / EF Core FindAsync(id) / Spring Data findById without owner check
+    if (/(?:findById|findByPk)\s*\([^)]*?(?:id|req\.params|\$id)|\.FindAsync\s*\(\s*(?:id|orderId|userId|accountId|itemId)\b|\.FirstOrDefault(?:Async)?\s*\(\s*[a-zA-Z0-9_]+\s*=>\s*[a-zA-Z0-9_]+\.Id\s*==\s*id\b|filter_by\(id=|\.filter\([a-zA-Z_]+\.id\s*==\s*id/i.test(line)) {
       const contextBlock = lines.slice(Math.max(0, i - 10), Math.min(lines.length, i + 15)).join('\n');
-      const hasOwnerCheck = /user_id|userId|tenant_id|tenantId|owner_id|ownerId|org_id|accountId|req\.user|current_user/i.test(contextBlock);
+      const hasOwnerCheck = /user_id|userId|tenant_id|tenantId|owner_id|ownerId|org_id|accountId|req\.user|current_user|User\.FindFirst|ClaimsPrincipal|User\.Identity/i.test(contextBlock);
 
       if (!hasOwnerCheck && !line.includes('//') && !line.includes('#') &&
           !/^\s*['"`]/.test(line) &&

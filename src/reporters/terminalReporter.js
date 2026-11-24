@@ -8,7 +8,7 @@ export function printTerminalReport(scanResult) {
   console.log(colors.cyan(colors.bold('   ___         __  __    _      __              __          ')));
   console.log(colors.blue(colors.bold('  / _ | __ __ / /_/ /_  | | /| / /__ _____ ___ / /__ ___    ')));
   console.log(colors.magenta(colors.bold(' / __ |/ // // __/ _ \\  | |/ |/ / _ `/ __// _  / -_) _ \\   ')));
-  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v1.2.1')));
+  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v1.3.0')));
   console.log(colors.gray(' ──────────────────────────────────────────────────────────────────────────'));
   
   // Target & Environment Info
@@ -19,6 +19,16 @@ export function printTerminalReport(scanResult) {
   console.log(` ${colors.green('✔')} Scanned ${colors.bold(stats.filesScanned)} files in ${colors.cyan(stats.durationMs + 'ms')}`);
   if (scanResult.suppressedBaselineCount) {
     console.log(` ${colors.cyan('ℹ')} Baseline: ${colors.bold(scanResult.suppressedBaselineCount)} historical finding(s) suppressed.`);
+  }
+
+  // Coverage Transparency Scorecard
+  if (stats.coverageScorecard && stats.coverageScorecard.length > 1) {
+    console.log(colors.gray(' ──────────────────────────────────────────────────────────────────────────'));
+    console.log(` ${colors.bold('Coverage Transparency:')}`);
+    for (const item of stats.coverageScorecard) {
+      const statusIcon = item.status === 'ACTIVE' ? colors.green('✔ ACTIVE') : colors.yellow('▲ LIMITED');
+      console.log(`   ${statusIcon}  ${colors.bold(item.target.padEnd(25))} ${colors.gray(item.detail)}`);
+    }
   }
   console.log(colors.gray(' ──────────────────────────────────────────────────────────────────────────'));
   console.log('');

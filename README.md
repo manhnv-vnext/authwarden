@@ -78,11 +78,12 @@ Traditional SAST scanners (SonarQube, Fortify, Snyk) were built two decades ago 
 
 **AuthWarden** was purpose-built to solve this gap with 5 core tenets:
 
-1. **Focus on Access Control & Logic:** Natively understands Next.js App Router, Server Actions, FastAPI, Express, Django, and Go. Flags unauthenticated mutating endpoints and database queries lacking tenant ownership filters (`BOLA / IDOR`).
+1. **Focus on Access Control & Logic:** Natively understands Next.js App Router, Server Actions, FastAPI, Express, Django, Go, Java Spring Boot, and C# / ASP.NET Core (.NET 8/9/10). Flags unauthenticated mutating endpoints and database queries lacking tenant ownership filters (`BOLA / IDOR`).
 2. **Zero False-Positive Secrets with Active Verification:** Employs Shannon entropy analysis and context-aware pattern matching. Automatically redacts all output (`sk_live_***`) and provides non-destructive live verification against Stripe, GitHub, and OpenAI.
 3. **AST Reachability-Aware CVE Scanner:** Unlike dumb lockfile scanners that alert on every dev-dependency, AuthWarden inspects your source code to verify whether a vulnerable dependency is actually **imported and reachable** in runtime code paths.
 4. **AI Agent & Model Context Protocol (MCP) Guard:** Modern AI developer workflows rely on MCP servers (`mcp.json`) and LLM tools. AuthWarden audits tool declarations for unsandboxed shell execution and root filesystem mounts.
-5. **Sub-Second Performance & Zero Dependencies:** Written in pure, optimized JavaScript with zero `npm` external dependencies. Cold starts take **under 10 milliseconds** and full repository scans execute in **under 50 milliseconds**.
+5. **Coverage Transparency (No False Pass):** Unlike legacy tools that report "Pass" on languages they don't assess, AuthWarden explicitly reports active vs limited coverage for every language detected in your repository.
+6. **Sub-Second Performance & Zero Dependencies:** Written in pure, optimized JavaScript with zero `npm` external dependencies. Cold starts take **under 10 milliseconds** and full repository scans execute in **under 50 milliseconds**.
 
 ---
 

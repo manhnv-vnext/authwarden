@@ -13,10 +13,10 @@ export const SAST_RULES = [
     title: 'SQL Injection: Dynamic Query Construction with User Input',
     cwe: 'CWE-89',
     owasp: 'A03:2021-Injection',
-    languages: ['.js', '.jsx', '.ts', '.tsx', '.py', '.php', '.go', '.java'],
-    regex: /\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^;]*?(?:['"`]\s*\+|\+\s*['"`]|\$\{|\.concat\s*\(|%s['"]\s*%).*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|form|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b)/i,
+    languages: ['.js', '.jsx', '.ts', '.tsx', '.py', '.php', '.go', '.java', '.cs'],
+    regex: /\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^;]*?(?:['"`]\s*\+|\+\s*['"`]|\$\{|\.concat\s*\(|%s['"]\s*%).*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|form|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b)|(?:\bFromSqlRaw|\bExecuteSqlRawAsync|\bExecuteSqlInterpolatedAsync)\s*\(\s*\$["']|new\s+SqlCommand\s*\([^)]*?\+/i,
     description: 'Dynamic SQL query constructed directly with untrusted user input without parameterized placeholders.',
-    remediation: 'Use parameterized queries, prepared statements (e.g. $1, $2 or ?), or an ORM (Prisma, TypeORM, SQLAlchemy).'
+    remediation: 'Use parameterized queries, prepared statements (e.g. $1, $2 or ?), or an ORM (Prisma, TypeORM, SQLAlchemy, EF Core).'
   },
 
   // 2. Command Injection
@@ -26,8 +26,8 @@ export const SAST_RULES = [
     title: 'Command Injection: Untrusted Input in System Shell Call',
     cwe: 'CWE-78',
     owasp: 'A03:2021-Injection',
-    languages: ['.js', '.jsx', '.ts', '.tsx', '.py', '.php'],
-    regex: /(?:\bchild_process\.|(?<![\w$.]))(?:exec|execSync|system|popen)\s*\(\s*(?:`[^`]*\$\{[^`]*?(?:\breq\.(?:query|body|params)\b|\brequest\.|\$_(?:GET|POST|REQUEST)\b)[^`]*`|[^)]*(?:\breq\.(?:query|body|params)\b|\brequest\.|\$_(?:GET|POST|REQUEST)\b)[^)]*)\)/i,
+    languages: ['.js', '.jsx', '.ts', '.tsx', '.py', '.php', '.cs'],
+    regex: /(?:\bchild_process\.|(?<![\w$.]))(?:exec|execSync|system|popen)\s*\([^)]*?(?:\breq\.(?:query|body|params)|\brequest\.|\$_(?:GET|POST|REQUEST))|\bProcess\.Start\s*\([^)]*?\+/i,
     description: 'Untrusted user input passed directly to system shell execution.',
     remediation: 'Avoid executing shell commands. Use `execFile` or `spawn` with an argument array instead of a shell string.'
   },
@@ -52,8 +52,8 @@ export const SAST_RULES = [
     title: 'Server-Side Request Forgery (SSRF)',
     cwe: 'CWE-918',
     owasp: 'A10:2021-Server-Side Request Forgery',
-    languages: ['.js', '.ts', '.py', '.php', '.go', '.java'],
-    regex: /(?:\bfetch|\baxios\.(?:get|post)|\bhttps?\.get|\burllib\.request\.urlopen|\brequests\.(?:get|post))\s*\([^;]*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b)/i,
+    languages: ['.js', '.ts', '.py', '.php', '.go', '.java', '.cs'],
+    regex: /(?:\bfetch|\baxios\.(?:get|post)|\bhttps?\.get|\burllib\.request\.urlopen|\brequests\.(?:get|post)|(?:\b_?httpClient|\bclient|\bhttp)\.(?:GetAsync|PostAsync|GetStringAsync)|\bWebRequest\.Create|\bWebClient\.(?:DownloadString|DownloadData))\s*\([^;]*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b|\b\w*(?:url|uri|target|endpoint|path)\b)/i,
     description: 'Server makes outbound HTTP requests to user-supplied URLs without restricting internal network ranges (127.0.0.1, 169.254.169.254 cloud metadata).',
     remediation: 'Use a strict URL allowlist, block private/loopback IP address ranges, and disable HTTP redirects.'
   },
@@ -65,8 +65,8 @@ export const SAST_RULES = [
     title: 'Path Traversal: Arbitrary File Read / Include',
     cwe: 'CWE-22',
     owasp: 'A01:2021-Broken Access Control',
-    languages: ['.js', '.ts', '.py', '.php'],
-    regex: /(?:\bfs\.(?:readFile|readFileSync|createReadStream)|(?<![\w$.])(?:include|include_once|require|require_once)\s*\(|\bfile_get_contents|\bfopen)\s*\(?\s*[^;]*?(?:\breq\.(?:query|body|params)\b|\$_(?:GET|POST|REQUEST)\b|\brequest\.(?:args|GET|POST)\b)/i,
+    languages: ['.js', '.ts', '.py', '.php', '.cs'],
+    regex: /(?:\bfs\.(?:readFile|readFileSync|createReadStream)|(?<![\w$.])(?:include|include_once|require|require_once)\s*\(|\bfile_get_contents|\bfopen|\bFile\.(?:ReadAllText|ReadAllBytes|OpenRead|OpenWrite))\s*\(?\s*[^;]*?(?:\breq\.(?:query|body|params)\b|\$_(?:GET|POST|REQUEST)\b|\brequest\.(?:args|GET|POST)\b|\b\w*(?:fileName|filePath|path|file)\b)/i,
     description: 'Constructing file paths directly from user input allows reading arbitrary system or sensitive files (e.g. /etc/passwd, .env).',
     remediation: 'Validate input against an allowlist, use `path.basename()`, and ensure the resolved path stays within the intended base directory.'
   },
@@ -88,13 +88,13 @@ export const SAST_RULES = [
   {
     id: 'SAST-007',
     severity: 'CRITICAL',
-    title: 'Insecure Deserialization (pickle / unsafe yaml)',
+    title: 'Insecure Deserialization (pickle / unsafe yaml / TypeNameHandling)',
     cwe: 'CWE-502',
     owasp: 'A08:2021-Software and Data Integrity Failures',
-    languages: ['.py'],
-    regex: /(?:pickle\.loads|pickle\.load|yaml\.load)\s*\([^)]*?(?:request|input|file|data)/i,
-    description: 'Deserializing untrusted data with pickle or unsafe yaml.load allows remote code execution.',
-    remediation: 'Use safe serialization formats like JSON, or `yaml.safe_load()` in PyYAML.'
+    languages: ['.py', '.cs'],
+    regex: /(?:pickle\.loads|pickle\.load|yaml\.load)\s*\([^)]*?(?:request|input|file|data)|TypeNameHandling\s*=\s*TypeNameHandling\.(?:All|Auto|Objects)|BinaryFormatter\.(?:Deserialize)\s*\(/i,
+    description: 'Deserializing untrusted data with pickle, unsafe yaml.load, or TypeNameHandling.All allows remote code execution.',
+    remediation: 'Use safe serialization formats like JSON, avoid TypeNameHandling.All, or use `yaml.safe_load()` in PyYAML.'
   },
 
   // 8. Disabled TLS Verification
@@ -104,8 +104,8 @@ export const SAST_RULES = [
     title: 'Disabled TLS Certificate Verification',
     cwe: 'CWE-295',
     owasp: 'A05:2021-Security Misconfiguration',
-    languages: ['.js', '.ts', '.py'],
-    regex: /(?:NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]0['"]|\bverify\s*=\s*False\b|rejectUnauthorized\s*:\s*false)/i,
+    languages: ['.js', '.ts', '.py', '.cs', '.dart'],
+    regex: /(?:NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]0['"]|\bverify\s*=\s*False\b|rejectUnauthorized\s*:\s*false|ServerCertificateCustomValidationCallback\s*=\s*[^;]*?=>\s*true|DangerousAcceptAnyServerCertificateValidator|badCertificateCallback\s*[:=]\s*\(.*?=>\s*true)/i,
     description: 'Disabling SSL/TLS certificate validation exposes network communications to Man-in-the-Middle (MitM) eavesdropping.',
     remediation: 'Never disable TLS verification in production. Install valid CA certificates.'
   },
@@ -117,8 +117,8 @@ export const SAST_RULES = [
     title: 'Weak Cryptographic Hash Algorithm (MD5 / SHA-1)',
     cwe: 'CWE-328',
     owasp: 'A02:2021-Cryptographic Failures',
-    languages: ['.js', '.ts', '.py', '.php', '.java', '.go'],
-    regex: /(?:createHash\s*\(\s*['"](?:md5|sha1)['"]|hashlib\.(?:md5|sha1)\s*\(|md5\s*\(|sha1\s*\()/i,
+    languages: ['.js', '.ts', '.py', '.php', '.java', '.go', '.cs'],
+    regex: /(?:createHash\s*\(\s*['"](?:md5|sha1)['"]|hashlib\.(?:md5|sha1)\s*\(|md5\s*\(|sha1\s*\(|MD5\.Create\s*\(|SHA1\.Create\s*\()/i,
     description: 'Use of broken collision-prone hash algorithms (MD5 or SHA-1) for security-sensitive operations.',
     remediation: 'For passwords use bcrypt/argon2; for general hashing use SHA-256 or SHA-512.'
   },

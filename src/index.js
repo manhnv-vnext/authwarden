@@ -63,13 +63,49 @@ export async function runScan(targetPath = '.', options = {}) {
     if (f.name === 'Info.plist' || f.name === 'Podfile' || f.name.endsWith('.pbxproj')) {
       frameworks.add('iOS');
     }
+    if (f.ext === '.csproj' || f.name.endsWith('.sln') || f.ext === '.cs') {
+      let netAdded = false;
+      if (f.ext === '.csproj') {
+        try {
+          const csprojContent = fs.readFileSync(f.path, 'utf8');
+          const tfMatch = csprojContent.match(/<TargetFramework>(net[\d.]+)<\/TargetFramework>/i);
+          if (tfMatch) {
+            frameworks.add(`ASP.NET Core (.NET ${tfMatch[1].replace(/^net/i, '')})`);
+            netAdded = true;
+          }
+          if (/Microsoft\.AspNetCore\.Authentication\.JwtBearer/i.test(csprojContent)) {
+            frameworks.add('JwtBearer (Auth)');
+          }
+          if (/AWSSDK\.S3/i.test(csprojContent)) {
+            frameworks.add('AWS S3 (Storage)');
+          }
+          if (/Microsoft\.EntityFrameworkCore/i.test(csprojContent)) {
+            frameworks.add('Entity Framework Core');
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (!netAdded && !Array.from(frameworks).some(fr => fr.includes('ASP.NET') || fr.includes('.NET'))) {
+        frameworks.add('.NET (C#)');
+      }
+    }
+    if (f.name === 'pom.xml' || f.name === 'build.gradle' || f.name === 'build.gradle.kts') {
+      frameworks.add('Java (Spring/Maven/Gradle)');
+    }
+    if (f.name === 'Cargo.toml') {
+      frameworks.add('Rust (Cargo)');
+    }
+    if (f.name === 'Gemfile') {
+      frameworks.add('Ruby (Bundler)');
+    }
   }
 
   const allFindings = [];
 
   for (const file of files) {
     // 1. API & Auth Scanner
-    if (['.js', '.ts', '.jsx', '.tsx', '.mjs', '.py'].includes(file.ext)) {
+    if (['.js', '.ts', '.jsx', '.tsx', '.mjs', '.py', '.cs', '.java'].includes(file.ext)) {
       const apiFindings = scanApiAuth(file);
       allFindings.push(...apiFindings);
     }
@@ -79,7 +115,7 @@ export async function runScan(targetPath = '.', options = {}) {
     allFindings.push(...secretFindings);
 
     // 3. SAST & Intra-file Taint-Lite Scanner
-    if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.php', '.go', '.java'].includes(file.ext)) {
+    if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.php', '.go', '.java', '.cs', '.dart'].includes(file.ext)) {
       const sastFindings = scanSAST(file);
       allFindings.push(...sastFindings);
     }
@@ -206,6 +242,85 @@ export async function runScan(targetPath = '.', options = {}) {
   const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
   activeFindings.sort((a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99));
 
+  // Coverage Transparency Scorecard
+  const detectedExts = new Set(files.map(f => f.ext.toLowerCase()).filter(Boolean));
+  const coverageScorecard = [];
+  coverageScorecard.push({
+    target: 'Secrets & Credentials',
+    status: 'ACTIVE',
+    detail: '100% (All text & config files)'
+  });
+  if (files.some(f => f.name.toLowerCase() === 'dockerfile' || f.name === 'docker-compose.yml' || f.ext === '.tf' || f.relative.includes('k8s/'))) {
+    coverageScorecard.push({
+      target: 'IaC & Container Security',
+      status: 'ACTIVE',
+      detail: 'Docker, Terraform, K8s rules'
+    });
+  }
+  if (detectedExts.has('.cs') || files.some(f => f.ext === '.csproj')) {
+    coverageScorecard.push({
+      target: 'C# (.NET / ASP.NET Core)',
+      status: 'ACTIVE',
+      detail: 'Auth, BOLA, Mass Assignment & SAST'
+    });
+  }
+  if (detectedExts.has('.java')) {
+    coverageScorecard.push({
+      target: 'Java (Spring Boot)',
+      status: 'ACTIVE',
+      detail: 'Auth & SAST rules'
+    });
+  }
+  if (detectedExts.has('.js') || detectedExts.has('.ts') || detectedExts.has('.jsx') || detectedExts.has('.tsx')) {
+    coverageScorecard.push({
+      target: 'JavaScript / TypeScript',
+      status: 'ACTIVE',
+      detail: 'Auth, SAST & Taint flow'
+    });
+  }
+  if (detectedExts.has('.py')) {
+    coverageScorecard.push({
+      target: 'Python (FastAPI / Django)',
+      status: 'ACTIVE',
+      detail: 'Auth & SAST rules'
+    });
+  }
+  if (detectedExts.has('.go')) {
+    coverageScorecard.push({
+      target: 'Go',
+      status: 'ACTIVE',
+      detail: 'SAST rules'
+    });
+  }
+  if (detectedExts.has('.php')) {
+    coverageScorecard.push({
+      target: 'PHP',
+      status: 'ACTIVE',
+      detail: 'SAST rules'
+    });
+  }
+  if (detectedExts.has('.dart') || files.some(f => f.name === 'pubspec.yaml')) {
+    coverageScorecard.push({
+      target: 'Flutter / Dart',
+      status: 'ACTIVE',
+      detail: 'Mobile ATS, Cleartext & SAST'
+    });
+  }
+  if (detectedExts.has('.rs') || files.some(f => f.name === 'Cargo.toml')) {
+    coverageScorecard.push({
+      target: 'Rust',
+      status: 'LIMITED',
+      detail: 'Secrets & IaC only (SAST in roadmap)'
+    });
+  }
+  if (detectedExts.has('.rb') || files.some(f => f.name === 'Gemfile')) {
+    coverageScorecard.push({
+      target: 'Ruby',
+      status: 'LIMITED',
+      detail: 'Secrets & IaC only (SAST in roadmap)'
+    });
+  }
+
   const durationMs = Date.now() - startTime;
 
   return {
@@ -215,6 +330,7 @@ export async function runScan(targetPath = '.', options = {}) {
     stats: {
       filesScanned: files.length,
       frameworks: Array.from(frameworks),
+      coverageScorecard,
       durationMs
     }
   };

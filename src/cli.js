@@ -18,7 +18,7 @@ export async function cli(args = []) {
   }
 
   if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
-    console.log('authwarden v1.2.1');
+    console.log('authwarden v1.3.0');
     return 0;
   }
 
