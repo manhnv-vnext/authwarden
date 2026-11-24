@@ -308,11 +308,13 @@ AuthWarden ships with 45+ precision rules across 8 security categories:
 | **API & Auth** | `AUTH-006` | Unthrottled Auth Endpoint (Brute-Force Risk) | `HIGH` |
 | **API & Auth** | `AUTH-007` | Sensitive Data Exposure (Password Hash in Response) | `HIGH` |
 | **API & Auth** | `AUTH-008` | Unauthenticated File Upload Endpoint (DoS / Malware Staging) | `HIGH` |
+| **API & Auth** | `AUTH-009` | Insecure CORS Policy (Arbitrary / Wildcard Origin with Credentials) | `HIGH` |
 | **Business Logic**| `LOGIC-001` | Multi-Step Workflow / Payment Status Evasion via Client Payload | `HIGH` |
 | **Business Logic**| `LOGIC-002` | Potential TOCTOU Race Condition on Balance / Coupon State | `HIGH` |
 | **Business Logic**| `LOGIC-003` | Unchecked Numeric Input: Negative Price / Quantity Tampering | `HIGH` |
 | **Business Logic**| `LOGIC-004` | Insecure JWT Verification: Missing Algorithm Whitelist | `HIGH` |
 | **Business Logic**| `LOGIC-005` | Client-Only Logout: Missing Server-Side Session Revocation | `MEDIUM` |
+| **Business Logic**| `LOGIC-006` | Disabled JWT Signature or Expiration Validation in Token Config | `CRITICAL` |
 | **API Contract** | `SPEC-001` | Unprotected Sensitive Operation in API Specification | `HIGH` |
 | **API Contract** | `SPEC-002` | Explicit Public Security Override (`security: []`) | `HIGH` |
 | **API Contract** | `SPEC-003` | Sensitive Credential Defined as URL Query Parameter | `HIGH` |

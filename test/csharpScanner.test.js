@@ -345,3 +345,89 @@ public class SafeUploadController : ControllerBase
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('detects missing auth and file upload risks in ASP.NET Core Minimal APIs', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-minimal-api-'));
+  const programFile = path.join(tmpDir, 'Program.cs');
+  const csCode = `
+var builder = WebApplication.CreateBuilder(args);
+var app = builder.Build();
+
+// 1. Shadow Admin Minimal API missing auth (AUTH-001)
+app.MapGet("/api/admin/metrics", () => Results.Ok(new { cpu = 90 }));
+
+// 2. State-Modifying Minimal API missing auth (AUTH-002)
+app.MapPost("/api/users/update-email", (string email) => Results.Ok());
+
+// 3. File upload Minimal API missing auth (AUTH-008)
+app.MapPost("/api/upload-profile", (IFormFile file) => Results.Ok());
+
+// 4. Safe Minimal API with RequireAuthorization()
+app.MapGet("/api/admin/settings", () => Results.Ok()).RequireAuthorization("AdminPolicy");
+
+app.Run();
+`;
+  fs.writeFileSync(programFile, csCode);
+
+  const res = await runScan(tmpDir);
+  const auth001 = res.findings.find(f => f.ruleId === 'AUTH-001' && f.title.includes('Minimal API'));
+  const auth002 = res.findings.find(f => f.ruleId === 'AUTH-002' && f.title.includes('Minimal API'));
+  const auth008 = res.findings.find(f => f.ruleId === 'AUTH-008' && f.title.includes('Minimal API'));
+
+  assert.ok(auth001, 'Should flag Admin Minimal API missing RequireAuthorization (AUTH-001)');
+  assert.ok(auth002, 'Should flag State-modifying Minimal API missing RequireAuthorization (AUTH-002)');
+  assert.ok(auth008, 'Should flag File upload Minimal API missing RequireAuthorization (AUTH-008)');
+  assert.equal(res.findings.some(f => f.snippet?.includes('/api/admin/settings')), false, 'Authorized route should not be flagged');
+  assert.ok(res.stats.frameworks.some(f => f.includes('Minimal APIs')), 'Should detect ASP.NET Core Minimal APIs framework');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('detects insecure CORS policy (AUTH-009) in ASP.NET Core', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-cors-'));
+  const programFile = path.join(tmpDir, 'Program.cs');
+  const csCode = `
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("InsecurePolicy", policy =>
+    {
+        policy.SetIsOriginAllowed(origin => true)
+              .AllowCredentials();
+    });
+});
+`;
+  fs.writeFileSync(programFile, csCode);
+
+  const res = await runScan(tmpDir);
+  const corsFinding = res.findings.find(f => f.ruleId === 'AUTH-009');
+  assert.ok(corsFinding, 'Should detect insecure CORS policy with AllowCredentials and SetIsOriginAllowed');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('detects disabled JWT signature and lifetime validation (LOGIC-006) in C#', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-jwt-bypass-'));
+  const authConfigFile = path.join(tmpDir, 'AuthConfig.cs');
+  const csCode = `
+using Microsoft.IdentityModel.Tokens;
+
+public static class AuthConfig
+{
+    public static TokenValidationParameters GetInsecureParameters()
+    {
+        return new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = false,
+            ValidateLifetime = false
+        };
+    }
+}
+`;
+  fs.writeFileSync(authConfigFile, csCode);
+
+  const res = await runScan(tmpDir);
+  const logic006 = res.findings.filter(f => f.ruleId === 'LOGIC-006');
+  assert.ok(logic006.length >= 2, 'Should detect disabled ValidateIssuerSigningKey and ValidateLifetime (LOGIC-006)');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

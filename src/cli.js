@@ -18,7 +18,7 @@ export async function cli(args = []) {
   }
 
   if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
-    console.log('authwarden v1.4.0');
+    console.log('authwarden v1.5.0');
     return 0;
   }
 
@@ -302,6 +302,7 @@ ${colors.bold('API & AUTHORIZATION:')}
   • ${colors.yellow('AUTH-006')}  Unthrottled Authentication Endpoint (Brute-Force Risk)
   • ${colors.yellow('AUTH-007')}  Sensitive Data Exposure (Password Hash in Response)
   • ${colors.yellow('AUTH-008')}  Unauthenticated File Upload Endpoint
+  • ${colors.yellow('AUTH-009')}  Insecure CORS Policy (Arbitrary Origin with Credentials)
 
 ${colors.bold('SAST & INTRA-FILE TAINT-LITE:')}
   • ${colors.red('SAST-001')}  SQL Injection: Dynamic Query Construction with User Input
@@ -351,6 +352,7 @@ ${colors.bold('BUSINESS LOGIC & WORKFLOWS:')}
   • ${colors.yellow('LOGIC-003')} Unchecked Numeric Input: Negative Price / Quantity Tampering
   • ${colors.yellow('LOGIC-004')} Insecure JWT Verification: Missing Algorithm Whitelist
   • ${colors.blue('LOGIC-005')}   Client-Only Logout: Missing Server-Side Session Revocation
+  • ${colors.red('LOGIC-006')}    Disabled JWT Signature or Expiration Validation
 
 ${colors.bold('OPENAPI & API SPEC CONTRACTS:')}
   • ${colors.yellow('SPEC-001')}  Unprotected Sensitive Operation in API Spec

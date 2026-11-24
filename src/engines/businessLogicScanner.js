@@ -69,6 +69,18 @@ const LOGIC_RULES = [
         !content.includes('logout(') && !content.includes('handleLogout') && !content.includes('invalidate') &&
         !content.includes('revoke') && !content.includes('blacklist') && !content.includes('destroy') && !content.includes('deleteSession');
     }
+  },
+  {
+    id: 'LOGIC-006',
+    severity: 'CRITICAL',
+    title: 'Disabled JWT Signature or Expiration Validation (Security Bypass)',
+    description: 'TokenValidationParameters explicitly disables signature verification (ValidateIssuerSigningKey = false, RequireSignedTokens = false) or expiration checks (ValidateLifetime = false), allowing forged or expired tokens to be accepted.',
+    remediation: 'Always enable signature verification and expiration: ValidateIssuerSigningKey = true, RequireSignedTokens = true, and ValidateLifetime = true.',
+    test: (line, content) => {
+      if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
+      if (/^\s*['"`]/.test(line) || /(?:vulnerableCode|content|example|sample|snippet|pattern|description|hypothesis|title|lineNumber|isTarget)\s*[:=]/i.test(line)) return false;
+      return /(?:ValidateIssuerSigningKey\s*=\s*false|RequireSignedTokens\s*=\s*false|ValidateLifetime\s*=\s*false)/i.test(line);
+    }
   }
 ];
 
@@ -77,7 +89,7 @@ export async function scanBusinessLogic(file, allFiles = [], options = {}) {
   const ext = file.ext.toLowerCase();
 
   // Only scan application logic files
-  if (!['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs', '.py', '.php', '.go'].includes(ext)) {
+  if (!['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs', '.py', '.php', '.go', '.cs'].includes(ext)) {
     return findings;
   }
 

@@ -92,6 +92,9 @@ export async function runScan(targetPath = '.', options = {}) {
       if (f.ext === '.cs') {
         try {
           const csContent = fs.readFileSync(f.path, 'utf8');
+          if (/\b(?:app|endpoints|routes)\.Map(?:Get|Post|Put|Delete)\b|\bWebApplication\.CreateBuilder\b/i.test(csContent)) {
+            frameworks.add('ASP.NET Core Minimal APIs');
+          }
           if (/IFormFile|AmazonS3Client|InitiateMultipartUpload|TransferUtility/i.test(csContent)) {
             frameworks.add('File Upload / Multipart (S3/IFormFile)');
           }

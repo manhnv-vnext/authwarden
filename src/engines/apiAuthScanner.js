@@ -292,6 +292,66 @@ export function scanApiAuth(file) {
         }
       }
     }
+
+    // 5b. C# / ASP.NET Core Minimal APIs
+    const minimalApiRegex = /\b([a-zA-Z0-9_]+)\.(MapGet|MapPost|MapPut|MapDelete|MapPatch)\s*\(\s*["']([^"']+)["']/g;
+    let minMatch;
+    while ((minMatch = minimalApiRegex.exec(content)) !== null) {
+      const caller = minMatch[1];
+      const httpVerb = minMatch[2].replace(/^Map/, '').toUpperCase();
+      const routePath = minMatch[3];
+      const lineNo = content.slice(0, minMatch.index).split('\n').length;
+
+      // Extract statement chain up to semicolon or next 600 chars
+      const chainSlice = content.slice(minMatch.index, Math.min(content.length, minMatch.index + 600));
+      const statementChain = chainSlice.split(';')[0];
+
+      const hasAuth = /\.RequireAuthorization\s*\(/i.test(statementChain) || /\[Authorize(?:\([^)]*\))?\]/i.test(statementChain);
+      const hasAllowAnonymous = /\.AllowAnonymous\s*\(/i.test(statementChain) || /\[AllowAnonymous\]/i.test(statementChain);
+      const isGroupAuthorized = new RegExp(`\\b${caller}\\s*=[^;]*\\.RequireAuthorization\\s*\\(`, 'i').test(content);
+
+      const isAuthorized = (hasAuth || isGroupAuthorized) && !hasAllowAnonymous;
+      const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(routePath)) || /admin/i.test(routePath);
+      const hasFileUpload = /\b(?:IFormFile|IFormFileCollection|IEnumerable<IFormFile>|List<IFormFile>)\b/i.test(statementChain) ||
+        /\b(?:Request\.Form\.Files|InitiateMultipartUpload|UploadPart|CompleteMultipartUpload|GetPreSignedURL)/i.test(statementChain);
+
+      if (isAdmin && !isAuthorized) {
+        findings.push({
+          ruleId: 'AUTH-001',
+          severity: 'CRITICAL',
+          title: `ASP.NET Core Minimal API Admin Route Missing RequireAuthorization: ${httpVerb} ${routePath}`,
+          file: relPath,
+          line: lineNo,
+          snippet: lines[lineNo - 1]?.trim(),
+          description: `Minimal API endpoint "${httpVerb} ${routePath}" contains administrative keywords but lacks .RequireAuthorization(), allowing unauthenticated access.`,
+          remediation: `Chain .RequireAuthorization() to the endpoint mapping: app.${minMatch[2]}('${routePath}', ...).RequireAuthorization();`
+        });
+      } else if (hasFileUpload && !isAuthorized) {
+        findings.push({
+          ruleId: 'AUTH-008',
+          severity: 'HIGH',
+          title: `Unauthenticated File Upload Minimal API: ${httpVerb} ${routePath}`,
+          file: relPath,
+          line: lineNo,
+          snippet: lines[lineNo - 1]?.trim(),
+          description: `Minimal API endpoint "${httpVerb} ${routePath}" accepts file uploads without requiring authentication.`,
+          remediation: `Chain .RequireAuthorization() to the upload endpoint.`
+        });
+      } else if (!isAuthorized && ['POST', 'PUT', 'DELETE'].includes(httpVerb)) {
+        if (!/login|register|signup|forgot|webhook|callback|health|auth/i.test(routePath)) {
+          findings.push({
+            ruleId: 'AUTH-002',
+            severity: 'HIGH',
+            title: `State-Modifying ASP.NET Core Minimal API Without Authorization: ${httpVerb} ${routePath}`,
+            file: relPath,
+            line: lineNo,
+            snippet: lines[lineNo - 1]?.trim(),
+            description: `State-altering Minimal API "${httpVerb} ${routePath}" lacks .RequireAuthorization(). Anonymous users can invoke mutations.`,
+            remediation: `Chain .RequireAuthorization() to the endpoint.`
+          });
+        }
+      }
+    }
   }
 
   // 6. Java Spring Boot Controllers
@@ -338,7 +398,42 @@ export function scanApiAuth(file) {
     }
   }
 
-  // 5. BOLA / IDOR Pattern & Sensitive Data Exposure
+  // 7. Insecure CORS Configuration: Wildcard / Dynamic Origin with Credentials (AUTH-009)
+  if (file.ext === '.cs') {
+    const csharpCorsRegex = /(?:AllowAnyOrigin\s*\([^)]*\)[\s\S]{0,150}\.AllowCredentials\s*\(|\.SetIsOriginAllowed\s*\(\s*[^)]*=>\s*true\s*\)[\s\S]{0,150}\.AllowCredentials\s*\(|\.AllowCredentials\s*\(\)[\s\S]{0,150}\.SetIsOriginAllowed\s*\(\s*[^)]*=>\s*true\s*\))/i;
+    const corsMatch = content.match(csharpCorsRegex);
+    if (corsMatch) {
+      const lineNo = content.slice(0, corsMatch.index).split('\n').length;
+      findings.push({
+        ruleId: 'AUTH-009',
+        severity: 'HIGH',
+        title: 'Insecure CORS Policy: Arbitrary Origin with Credentials Allowed',
+        file: relPath,
+        line: lineNo,
+        snippet: lines[lineNo - 1]?.trim(),
+        description: 'CORS policy enables .AllowCredentials() together with .AllowAnyOrigin() or .SetIsOriginAllowed(_ => true). Attackers can host malicious sites that make authenticated cross-origin requests to your API.',
+        remediation: 'Specify explicit trusted origins via .WithOrigins("https://yourdomain.com") when using .AllowCredentials().'
+      });
+    }
+  } else if (['.js', '.ts'].includes(file.ext)) {
+    const nodeCorsRegex = /cors\s*\(\s*\{[\s\S]{0,100}(?:origin\s*:\s*(?:true|['"]\*['"])[\s\S]{0,100}credentials\s*:\s*true|credentials\s*:\s*true[\s\S]{0,100}origin\s*:\s*(?:true|['"]\*['"]))/i;
+    const match = content.match(nodeCorsRegex);
+    if (match) {
+      const lineNo = content.slice(0, match.index).split('\n').length;
+      findings.push({
+        ruleId: 'AUTH-009',
+        severity: 'HIGH',
+        title: 'Insecure CORS Policy: Wildcard / Dynamic Origin with Credentials Allowed',
+        file: relPath,
+        line: lineNo,
+        snippet: lines[lineNo - 1]?.trim(),
+        description: 'Express CORS middleware allows credentials with origin: true or origin: "*". Any third-party website visited by an authenticated user can access private API responses.',
+        remediation: 'Set origin to an explicit domain allowlist array: cors({ origin: ["https://app.example.com"], credentials: true }).'
+      });
+    }
+  }
+
+  // 8. BOLA / IDOR Pattern & Sensitive Data Exposure
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     

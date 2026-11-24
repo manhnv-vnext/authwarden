@@ -90,3 +90,32 @@ export async function handleUser(req, res) {
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('detects insecure CORS policy with credentials (AUTH-009) in Express', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-cors-express-'));
+  const serverFile = path.join(tmpDir, 'server.js');
+  const code = `
+const express = require('express');
+const cors = require('cors');
+const app = express();
+
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
+`;
+  fs.writeFileSync(serverFile, code);
+
+  const mockFile = {
+    path: serverFile,
+    relative: 'server.js',
+    name: 'server.js',
+    ext: '.js'
+  };
+
+  const findings = scanApiAuth(mockFile);
+  const corsRule = findings.find(f => f.ruleId === 'AUTH-009');
+  assert.ok(corsRule, 'Expected AUTH-009 for origin: true with credentials: true');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
