@@ -89,6 +89,19 @@ export async function runScan(targetPath = '.', options = {}) {
       if (!netAdded && !Array.from(frameworks).some(fr => fr.includes('ASP.NET') || fr.includes('.NET'))) {
         frameworks.add('.NET (C#)');
       }
+      if (f.ext === '.cs') {
+        try {
+          const csContent = fs.readFileSync(f.path, 'utf8');
+          if (/IFormFile|AmazonS3Client|InitiateMultipartUpload|TransferUtility/i.test(csContent)) {
+            frameworks.add('File Upload / Multipart (S3/IFormFile)');
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (f.name === 'packages.lock.json' || f.name.toLowerCase() === 'directory.packages.props') {
+        frameworks.add('NuGet (.NET Packages)');
+      }
     }
     if (f.name === 'pom.xml' || f.name === 'build.gradle' || f.name === 'build.gradle.kts') {
       frameworks.add('Java (Spring/Maven/Gradle)');
@@ -133,7 +146,10 @@ export async function runScan(targetPath = '.', options = {}) {
     allFindings.push(...mcpFindings);
 
     // 7. CVE & Software Composition Analysis (SCA) Scanner
-    if (['package.json', 'package-lock.json', 'requirements.txt', 'go.mod', 'composer.json'].includes(file.name.toLowerCase())) {
+    if (
+      ['package.json', 'package-lock.json', 'requirements.txt', 'go.mod', 'composer.json', 'packages.lock.json', 'directory.packages.props'].includes(file.name.toLowerCase()) ||
+      file.ext === '.csproj'
+    ) {
       const cveFindings = await scanCVEs(file, files, options);
       allFindings.push(...cveFindings);
     }
@@ -261,7 +277,7 @@ export async function runScan(targetPath = '.', options = {}) {
     coverageScorecard.push({
       target: 'C# (.NET / ASP.NET Core)',
       status: 'ACTIVE',
-      detail: 'Auth, BOLA, Mass Assignment & SAST'
+      detail: 'Auth, BOLA, File Upload, SAST & NuGet SCA'
     });
   }
   if (detectedExts.has('.java')) {

@@ -162,7 +162,7 @@ Audits `openapi.yaml`, `swagger.json`, and Postman collections for:
 - Insecure cleartext transport (`http://`) in production server URLs.
 
 ### 6. 📦 SCA & Known CVE Scanner with Reachability Analysis
-Audits `package.json`, `requirements.txt`, `go.mod`, and `composer.json` for high-severity CVEs across modern ecosystems. Uses AST-guided reachability checks to distinguish between active dependencies and dormant ones, cutting alert noise by 80%.
+Audits `package.json`, `package-lock.json`, `requirements.txt`, `go.mod`, `composer.json`, `.csproj`, and `packages.lock.json` for high-severity CVEs across modern ecosystems (npm, PyPI, Go, Composer, and NuGet). Uses AST-guided reachability checks to distinguish between active dependencies and dormant ones, cutting alert noise by 80%.
 
 ### 7. 🤖 AI Agent & MCP Config Guard
 Audits Claude Desktop, Cursor, and custom AI agent tool manifests (`mcp.json`) to block unsandboxed shell execution (`bash`, `powershell`) and root filesystem access (`/`).
@@ -307,6 +307,7 @@ AuthWarden ships with 45+ precision rules across 8 security categories:
 | **API & Auth** | `AUTH-005` | Mass Assignment in Request Body Handling | `MEDIUM` |
 | **API & Auth** | `AUTH-006` | Unthrottled Auth Endpoint (Brute-Force Risk) | `HIGH` |
 | **API & Auth** | `AUTH-007` | Sensitive Data Exposure (Password Hash in Response) | `HIGH` |
+| **API & Auth** | `AUTH-008` | Unauthenticated File Upload Endpoint (DoS / Malware Staging) | `HIGH` |
 | **Business Logic**| `LOGIC-001` | Multi-Step Workflow / Payment Status Evasion via Client Payload | `HIGH` |
 | **Business Logic**| `LOGIC-002` | Potential TOCTOU Race Condition on Balance / Coupon State | `HIGH` |
 | **Business Logic**| `LOGIC-003` | Unchecked Numeric Input: Negative Price / Quantity Tampering | `HIGH` |
@@ -330,6 +331,7 @@ AuthWarden ships with 45+ precision rules across 8 security categories:
 | **SAST & Taint** | `SAST-008` | Disabled TLS Certificate Verification | `HIGH` |
 | **SAST & Taint** | `SAST-009` | Weak Cryptographic Hash (MD5 / SHA-1) | `MEDIUM` |
 | **SAST & Taint** | `SAST-011` | Open Redirect: Unvalidated URL in Redirect Call | `MEDIUM` |
+| **SAST & Taint** | `SAST-012` | Arbitrary File Upload: Unsanitized File Name in Path (CWE-434) | `HIGH` |
 | **Secrets** | `SEC-001` | AWS Access Key ID Exposure | `CRITICAL` |
 | **Secrets** | `SEC-002` | GitHub Personal Access Token Exposure | `CRITICAL` |
 | **Secrets** | `SEC-003` | OpenAI API Secret Key Exposure | `CRITICAL` |

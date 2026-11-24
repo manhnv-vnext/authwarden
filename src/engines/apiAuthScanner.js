@@ -211,7 +211,7 @@ export function scanApiAuth(file) {
     if (isController) {
       const classRouteMatch = content.match(/\[Route\(\s*["']([^"']+)["']\s*\)\]/i);
       const classRoute = classRouteMatch ? classRouteMatch[1] : '';
-      const classHeader = content.slice(0, content.indexOf('class '));
+      const classHeader = content.slice(0, content.indexOf('class ')).replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
       const classHasAuthorize = /\[Authorize(?:\([^)]*\))?\]/i.test(classHeader);
 
       const actionRegex = /\[(HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch|Route)(?:\(\s*["']?([^"')\s]*)["']?\s*\))?\](?:\s*\[[^\]]+\])*\s*(?:public|protected)\s+(?:async\s+)?(?:Task<[A-Za-z0-9_<>,\s]+>|[A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g;
@@ -225,9 +225,12 @@ export function scanApiAuth(file) {
         const method = httpAttr === 'Route' ? 'ANY' : httpAttr.replace(/^Http/, '').toUpperCase();
 
         const fullRoute = ('/' + classRoute + '/' + subRoute).replace(/\/+/g, '/').replace(/\/$/, '');
-        const methodAttributes = content.slice(Math.max(0, actMatch.index - 300), actMatch.index);
-        const methodHasAuthorize = /\[Authorize(?:\([^)]*\))?\]/i.test(methodAttributes);
-        const methodHasAllowAnonymous = /\[AllowAnonymous\]/i.test(methodAttributes);
+        const prevBrace = content.lastIndexOf('}', actMatch.index);
+        const headerStartIndex = prevBrace === -1 ? Math.max(0, actMatch.index - 300) : prevBrace + 1;
+        const rawMethodAttributes = content.slice(headerStartIndex, actMatch.index);
+        const cleanMethodAttributes = rawMethodAttributes.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+        const methodHasAuthorize = /\[Authorize(?:\([^)]*\))?\]/i.test(cleanMethodAttributes);
+        const methodHasAllowAnonymous = /\[AllowAnonymous\]/i.test(cleanMethodAttributes);
 
         const isAuthorized = (classHasAuthorize || methodHasAuthorize) && !methodHasAllowAnonymous;
         const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(fullRoute)) || /admin/i.test(actionName);
@@ -245,7 +248,21 @@ export function scanApiAuth(file) {
           });
         }
 
-        if (!isAuthorized && ['POST', 'PUT', 'DELETE'].includes(method)) {
+        const hasFileUpload = /\b(?:IFormFile|IFormFileCollection|IEnumerable<IFormFile>|List<IFormFile>)\b/i.test(methodParams) ||
+          /\b(?:Request\.Form\.Files|InitiateMultipartUpload|UploadPart|CompleteMultipartUpload|GetPreSignedURL)/i.test(lines.slice(methodLineNo - 1, methodLineNo + 25).join('\n'));
+
+        if (hasFileUpload && !isAuthorized) {
+          findings.push({
+            ruleId: 'AUTH-008',
+            severity: 'HIGH',
+            title: `Unauthenticated File Upload Endpoint: ${method} ${fullRoute || actionName}`,
+            file: relPath,
+            line: methodLineNo,
+            snippet: lines[methodLineNo - 1]?.trim(),
+            description: `Endpoint "${method} ${fullRoute || actionName}" accepts file uploads or initiates multipart upload without authentication ([Authorize]). Anonymous upload endpoints enable storage exhaustion, malware hosting, and denial of service.`,
+            remediation: `Add [Authorize] attribute to the upload action method or require caller authentication before processing uploads.`
+          });
+        } else if (!isAuthorized && ['POST', 'PUT', 'DELETE'].includes(method)) {
           if (!/login|register|signup|forgot|webhook|callback|health|auth/i.test(fullRoute + actionName)) {
             findings.push({
               ruleId: 'AUTH-002',
@@ -283,7 +300,7 @@ export function scanApiAuth(file) {
     if (isSpringController) {
       const classMappingMatch = content.match(/@RequestMapping\(\s*(?:value\s*=\s*)?["']([^"']+)["']/i);
       const classRoute = classMappingMatch ? classMappingMatch[1] : '';
-      const classHeader = content.slice(0, content.indexOf('class '));
+      const classHeader = content.slice(0, content.indexOf('class ')).replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
       const classHasAuth = /@PreAuthorize|@Secured|@RolesAllowed/.test(classHeader);
 
       const methodRegex = /@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)(?:\(\s*(?:value\s*=\s*)?["']([^"']+)["']\s*\))?(?:\s*@[A-Za-z0-9_]+(?:\([^)]*\))?)*\s*(?:public|protected)\s+(?:ResponseEntity<[A-Za-z0-9_<>,\s]+>|[A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)/g;
@@ -296,8 +313,11 @@ export function scanApiAuth(file) {
         const method = ann === 'RequestMapping' ? 'ANY' : ann.replace(/Mapping$/, '').toUpperCase();
 
         const fullRoute = ('/' + classRoute + '/' + subRoute).replace(/\/+/g, '/').replace(/\/$/, '');
-        const methodAttributes = content.slice(Math.max(0, jMatch.index - 250), jMatch.index);
-        const methodHasAuth = /@PreAuthorize|@Secured|@RolesAllowed/.test(methodAttributes);
+        const prevBrace = content.lastIndexOf('}', jMatch.index);
+        const headerStartIndex = prevBrace === -1 ? Math.max(0, jMatch.index - 250) : prevBrace + 1;
+        const rawMethodAttributes = content.slice(headerStartIndex, jMatch.index);
+        const cleanMethodAttributes = rawMethodAttributes.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+        const methodHasAuth = /@PreAuthorize|@Secured|@RolesAllowed/.test(cleanMethodAttributes);
 
         const isAuthorized = classHasAuth || methodHasAuth;
         const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(fullRoute)) || /admin/i.test(methodName);

@@ -190,3 +190,158 @@ public class AdminUserController {
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('detects NuGet vulnerabilities in .csproj with reachability analysis in C#', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-nuget-csproj-'));
+  const csprojFile = path.join(tmpDir, 'CloudPrint.csproj');
+  const csFile = path.join(tmpDir, 'PrintJobService.cs');
+
+  const csprojXml = `
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.0.0" />
+  </ItemGroup>
+</Project>
+`;
+  const csCode = `
+using Newtonsoft.Json;
+
+namespace CloudPrint;
+
+public class PrintJobService
+{
+    public void Process(string json)
+    {
+        var obj = JsonConvert.DeserializeObject(json);
+    }
+}
+`;
+  fs.writeFileSync(csprojFile, csprojXml);
+  fs.writeFileSync(csFile, csCode);
+
+  const res = await runScan(tmpDir);
+  const newtonsoftFinding = res.findings.find(f => f.ruleId === 'CVE-2024-21907');
+  const sqlClientFinding = res.findings.find(f => f.ruleId === 'CVE-2024-0056');
+
+  assert.ok(newtonsoftFinding, 'Flags CVE-2024-21907 for vulnerable Newtonsoft.Json');
+  assert.equal(newtonsoftFinding.isReachable, true, 'Newtonsoft.Json should be reachable due to using Newtonsoft.Json');
+  assert.ok(sqlClientFinding, 'Flags CVE-2024-0056 for vulnerable Microsoft.Data.SqlClient');
+  assert.equal(sqlClientFinding.isReachable, false, 'Microsoft.Data.SqlClient not imported in code');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('detects NuGet lockfile vulnerabilities in packages.lock.json', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-nuget-lock-'));
+  const lockFile = path.join(tmpDir, 'packages.lock.json');
+  const lockJson = {
+    version: 1,
+    dependencies: {
+      "net9.0": {
+        "RestSharp": {
+          "type": "Direct",
+          "requested": "[106.11.7, )",
+          "resolved": "106.11.7",
+          "contentHash": "xyz"
+        }
+      }
+    }
+  };
+  fs.writeFileSync(lockFile, JSON.stringify(lockJson, null, 2));
+
+  const res = await runScan(tmpDir);
+  const restSharpFinding = res.findings.find(f => f.ruleId === 'CVE-2021-27293');
+  assert.ok(restSharpFinding, 'Flags CVE-2021-27293 for vulnerable RestSharp in packages.lock.json');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('detects AUTH-008 and SAST-012 in ASP.NET Core file upload and S3 multipart', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-upload-'));
+  const controllerFile = path.join(tmpDir, 'UploadController.cs');
+  const csCode = `
+using Microsoft.AspNetCore.Mvc;
+using Amazon.S3;
+using Amazon.S3.Model;
+
+namespace SatoApi.Controllers;
+
+[ApiController]
+[Route("api/files")]
+public class UploadController : ControllerBase
+{
+    private readonly IAmazonS3 _s3Client;
+
+    // Unauthenticated file upload (AUTH-008) + Path Traversal (SAST-012)
+    [HttpPost("upload-avatar")]
+    public async Task<IActionResult> UploadAvatar(IFormFile file)
+    {
+        var localPath = Path.Combine("/var/uploads", file.FileName);
+        using var stream = System.IO.File.Create(localPath);
+        await file.CopyToAsync(stream);
+        return Ok();
+    }
+
+    // S3 Multipart Initiation without [Authorize] (AUTH-008)
+    [HttpPost("initiate-multipart")]
+    public async Task<IActionResult> InitiateMultipart([FromBody] string fileName)
+    {
+        var request = new InitiateMultipartUploadRequest
+        {
+            BucketName = "my-bucket",
+            Key = fileName
+        };
+        var response = await _s3Client.InitiateMultipartUploadAsync(request);
+        return Ok(response.UploadId);
+    }
+}
+`;
+  fs.writeFileSync(controllerFile, csCode);
+
+  const res = await runScan(tmpDir);
+  const auth008 = res.findings.filter(f => f.ruleId === 'AUTH-008');
+  const sast012 = res.findings.find(f => f.ruleId === 'SAST-012');
+
+  assert.ok(auth008.length >= 2, 'Should detect unauthenticated file upload endpoints (AUTH-008)');
+  assert.ok(sast012, 'Should flag direct use of file.FileName in Path.Combine (SAST-012)');
+  assert.ok(res.stats.frameworks.some(f => f.includes('File Upload / Multipart')), 'Should detect File Upload framework');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('does not flag sanitized file upload using Path.GetFileName', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-safe-upload-'));
+  const controllerFile = path.join(tmpDir, 'SafeUploadController.cs');
+  const csCode = `
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+
+namespace SatoApi.Controllers;
+
+[Authorize]
+[ApiController]
+[Route("api/safe-files")]
+public class SafeUploadController : ControllerBase
+{
+    [HttpPost("upload")]
+    public async Task<IActionResult> Upload(IFormFile file)
+    {
+        // Safe: sanitized with Path.GetFileName
+        var safeFileName = Path.GetFileName(file.FileName);
+        var targetPath = Path.Combine("/var/uploads", safeFileName);
+        return Ok();
+    }
+}
+`;
+  fs.writeFileSync(controllerFile, csCode);
+
+  const res = await runScan(tmpDir);
+  assert.equal(res.findings.some(f => f.ruleId === 'AUTH-008'), false, 'Authorized upload should not trigger AUTH-008');
+  assert.equal(res.findings.some(f => f.ruleId === 'SAST-012'), false, 'Path.GetFileName sanitized upload should not trigger SAST-012');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

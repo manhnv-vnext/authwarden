@@ -244,6 +244,74 @@ export const CURATED_CVE_DB = [
     title: 'Unintended Attribute Binding in Laravel Form Requests',
     description: 'Laravel versions prior to 8.75.0 mishandle mass assignment via FormRequest validation.',
     remediation: 'Upgrade laravel/framework to >= 8.75.0 or 9.x.'
+  },
+
+  // ─── NuGet (.NET / C#) ──────────────────────────────────────────────────
+  {
+    ecosystem: 'nuget',
+    package: 'Newtonsoft.Json',
+    affectedVersion: '< 13.0.1',
+    fixedVersion: '13.0.1',
+    cve: 'CVE-2024-21907',
+    severity: 'HIGH',
+    title: 'Denial of Service (Stack Overflow) in Newtonsoft.Json',
+    description: 'Newtonsoft.Json prior to 13.0.1 is vulnerable to DoS via deeply nested JSON data causing a StackOverflowException during deserialization.',
+    remediation: 'Upgrade Newtonsoft.Json to version 13.0.1 or higher.'
+  },
+  {
+    ecosystem: 'nuget',
+    package: 'RestSharp',
+    affectedVersion: '< 106.12.0',
+    fixedVersion: '106.12.0',
+    cve: 'CVE-2021-27293',
+    severity: 'HIGH',
+    title: 'Path Traversal / Insecure File Download in RestSharp',
+    description: 'RestSharp versions prior to 106.12.0 do not sanitize filename when using DownloadFileAsync, leading to path traversal.',
+    remediation: 'Upgrade RestSharp to version 106.12.0 or higher.'
+  },
+  {
+    ecosystem: 'nuget',
+    package: 'System.Text.Json',
+    affectedVersion: '< 8.0.5',
+    fixedVersion: '8.0.5',
+    cve: 'CVE-2024-43485',
+    severity: 'HIGH',
+    title: 'Denial of Service in System.Text.Json',
+    description: 'System.Text.Json contains a denial of service vulnerability when decoding deeply nested JSON payloads.',
+    remediation: 'Upgrade System.Text.Json to 8.0.5 or later (or 6.0.10 for .NET 6).'
+  },
+  {
+    ecosystem: 'nuget',
+    package: 'Microsoft.Data.SqlClient',
+    affectedVersion: '< 5.1.4',
+    fixedVersion: '5.1.4',
+    cve: 'CVE-2024-0056',
+    severity: 'HIGH',
+    title: 'Security Feature Bypass in Microsoft.Data.SqlClient',
+    description: 'Vulnerability allows an attacker to bypass TLS certificate validation and perform Man-in-the-Middle attacks.',
+    remediation: 'Upgrade Microsoft.Data.SqlClient to >= 5.1.4.'
+  },
+  {
+    ecosystem: 'nuget',
+    package: 'Microsoft.AspNetCore.Authentication.JwtBearer',
+    affectedVersion: '< 8.0.7',
+    fixedVersion: '8.0.7',
+    cve: 'CVE-2024-38095',
+    severity: 'HIGH',
+    title: 'Denial of Service in ASP.NET Core JwtBearer (Microsoft.IdentityModel)',
+    description: 'Malformed tokens with crafted key identifier or signature cause CPU exhaustion and denial of service.',
+    remediation: 'Upgrade Microsoft.AspNetCore.Authentication.JwtBearer to 8.0.7 or later (or 9.0+).'
+  },
+  {
+    ecosystem: 'nuget',
+    package: 'AWSSDK.Core',
+    affectedVersion: '< 3.7.0.25',
+    fixedVersion: '3.7.0.25',
+    cve: 'CVE-2022-31159',
+    severity: 'HIGH',
+    title: 'Arbitrary File Overwrite / Directory Traversal in AWSSDK.Core',
+    description: 'AWSSDK.Core allows arbitrary file writes on extraction when handling crafted S3 object keys.',
+    remediation: 'Upgrade AWSSDK.Core and AWSSDK.S3 to >= 3.7.0.25.'
   }
 ];
 
@@ -435,6 +503,103 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
     }
   }
 
+  // 5. Scan .csproj and Directory.Packages.props (NuGet / .NET)
+  if (file.ext === '.csproj' || fileName === 'directory.packages.props') {
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!/<(?:PackageReference|PackageVersion)\b/i.test(line)) continue;
+
+      const incMatch = line.match(/\bInclude=["']([^"']+)["']/i);
+      const verMatch = line.match(/\bVersion=["']([^"']+)["']/i);
+
+      let pkgName = incMatch ? incMatch[1] : null;
+      let version = verMatch ? verMatch[1] : null;
+
+      // Check nested <Version> child tag if version attribute not on same line
+      if (pkgName && !version) {
+        for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
+          const subVer = lines[j].match(/<Version>([^<]+)<\/Version>/i);
+          if (subVer) {
+            version = subVer[1].trim();
+            break;
+          }
+          if (lines[j].includes('</PackageReference>') || lines[j].includes('</PackageVersion>')) break;
+        }
+      }
+
+      if (pkgName && version) {
+        const match = CURATED_CVE_DB.find(
+          item => item.ecosystem === 'nuget' && item.package.toLowerCase() === pkgName.toLowerCase()
+        );
+
+        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+          const isReachable = checkPackageReachable(pkgName, allFiles, 'nuget');
+          findings.push({
+            ruleId: match.cve,
+            severity: match.severity,
+            title: `${match.title} (${pkgName} ${version})`,
+            file: relPath,
+            line: i + 1,
+            snippet: line.trim(),
+            isReachable,
+            description: `${match.description} (Affected: ${match.affectedVersion}).` +
+              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Installed NuGet dependency)'),
+            remediation: `${match.remediation} (Current version: ${version})`
+          });
+        }
+      }
+    }
+  }
+
+  // 6. Scan packages.lock.json (Resolved NuGet dependencies)
+  if (fileName === 'packages.lock.json') {
+    try {
+      const lock = JSON.parse(content);
+      const scannedNuget = new Set();
+
+      const checkNuget = (depName, version) => {
+        if (!depName || !version || scannedNuget.has(depName + '@' + version)) return;
+        scannedNuget.add(depName + '@' + version);
+
+        const match = CURATED_CVE_DB.find(
+          item => item.ecosystem === 'nuget' && item.package.toLowerCase() === depName.toLowerCase()
+        );
+
+        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+          const isReachable = checkPackageReachable(depName, allFiles, 'nuget');
+          const lineNo = findLineNumber(content, `"${depName}"`);
+
+          findings.push({
+            ruleId: match.cve,
+            severity: match.severity,
+            title: `${match.title} (${depName} ${version}) [NuGet lockfile]`,
+            file: relPath,
+            line: lineNo,
+            snippet: `"${depName}": "${version}"`,
+            isReachable,
+            description: `${match.description} (Affected: ${match.affectedVersion}).` +
+              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Resolved NuGet dependency in lockfile)'),
+            remediation: `${match.remediation} (Resolved: ${version})`
+          });
+        }
+      };
+
+      if (lock.dependencies && typeof lock.dependencies === 'object') {
+        for (const [tf, deps] of Object.entries(lock.dependencies)) {
+          if (deps && typeof deps === 'object') {
+            for (const [depName, depInfo] of Object.entries(deps)) {
+              const ver = depInfo.resolved || depInfo.version;
+              if (ver) checkNuget(depName, ver);
+            }
+          }
+        }
+      }
+    } catch {
+      // skip invalid json
+    }
+  }
+
   return findings;
 }
 
@@ -445,14 +610,22 @@ function findLineNumber(content, text) {
 
 const candidateFilesCache = new WeakMap();
 
-function getCandidateCodes(allFiles) {
-  if (candidateFilesCache.has(allFiles)) {
-    return candidateFilesCache.get(allFiles);
+function getCandidateCodes(allFiles, exts = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue']) {
+  if (!allFiles || !Array.isArray(allFiles)) return [];
+  let fileMap = candidateFilesCache.get(allFiles);
+  if (!fileMap) {
+    fileMap = new Map();
+    candidateFilesCache.set(allFiles, fileMap);
   }
+  const extKey = exts.slice().sort().join(',');
+  if (fileMap.has(extKey)) {
+    return fileMap.get(extKey);
+  }
+
   const codes = [];
   for (const f of allFiles) {
-    if (!['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue'].includes(f.ext)) continue;
-    if (f.relative.includes('node_modules')) continue;
+    if (!exts.includes(f.ext)) continue;
+    if (f.relative.includes('node_modules') || f.relative.includes('bin/') || f.relative.includes('obj/')) continue;
     try {
       const code = fs.readFileSync(f.path, 'utf8');
       codes.push(code);
@@ -460,15 +633,38 @@ function getCandidateCodes(allFiles) {
       // skip
     }
   }
-  candidateFilesCache.set(allFiles, codes);
+  fileMap.set(extKey, codes);
   return codes;
 }
 
-function checkPackageReachable(pkgName, allFiles) {
+function checkPackageReachable(pkgName, allFiles, ecosystem = 'npm') {
+  if (ecosystem === 'nuget') {
+    const csCodes = getCandidateCodes(allFiles, ['.cs']);
+    let nsPattern = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (/^AWSSDK\./i.test(pkgName)) {
+      nsPattern = '(?:Amazon\\.' + pkgName.replace(/^AWSSDK\./i, '') + '|AmazonS3|IAmazonS3)';
+    } else if (pkgName.toLowerCase() === 'newtonsoft.json') {
+      nsPattern = '(?:Newtonsoft\\.Json|JsonConvert)';
+    } else if (pkgName.toLowerCase() === 'system.text.json') {
+      nsPattern = '(?:System\\.Text\\.Json|JsonSerializer)';
+    } else if (pkgName.toLowerCase() === 'microsoft.data.sqlclient') {
+      nsPattern = '(?:Microsoft\\.Data\\.SqlClient|SqlConnection)';
+    } else if (pkgName.toLowerCase() === 'restsharp') {
+      nsPattern = '(?:RestSharp|RestClient)';
+    } else if (pkgName.toLowerCase() === 'microsoft.aspnetcore.authentication.jwtbearer') {
+      nsPattern = '(?:JwtBearer|AddJwtBearer|JwtBearerDefaults)';
+    }
+    const regex = new RegExp(`(?:using\\s+${nsPattern}|\\b${nsPattern}\\b)`, 'i');
+    for (const code of csCodes) {
+      if (regex.test(code)) return true;
+    }
+    return false;
+  }
+
   const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const importRegex = new RegExp(`(?:from\\s+['"]${escaped}(?:\\/[^'"]*)?['"]|require\\s*\\(\\s*['"]${escaped}(?:\\/[^'"]*)?['"]\\)|import\\s*\\(['"]${escaped}(?:\\/[^'"]*)?['"]\\))`, 'i');
 
-  const codes = getCandidateCodes(allFiles);
+  const codes = getCandidateCodes(allFiles, ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue']);
   for (const code of codes) {
     if (importRegex.test(code)) return true;
   }
@@ -477,7 +673,7 @@ function checkPackageReachable(pkgName, allFiles) {
 
 function isVersionPotentiallyVulnerable(spec, fixed) {
   if (!/\d/.test(spec) || /^(?:git\+|https?:|file:|github:)/i.test(spec)) return false;
-  const cleanSpec = spec.replace(/[\^~>=<]/g, '').trim().split(/\s+|\|\|/)[0];
+  const cleanSpec = spec.replace(/[\^~>=<\[\]()]/g, '').trim().split(/\s+|\|\||,/)[0];
   const specParts = cleanSpec.split('.').map(n => parseInt(n, 10) || 0);
   const fixedParts = fixed.split('.').map(n => parseInt(n, 10) || 0);
 

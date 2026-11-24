@@ -18,7 +18,7 @@ export async function cli(args = []) {
   }
 
   if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
-    console.log('authwarden v1.3.0');
+    console.log('authwarden v1.4.0');
     return 0;
   }
 
@@ -301,6 +301,7 @@ ${colors.bold('API & AUTHORIZATION:')}
   • ${colors.blue('AUTH-005')}  Mass Assignment in Body Handling
   • ${colors.yellow('AUTH-006')}  Unthrottled Authentication Endpoint (Brute-Force Risk)
   • ${colors.yellow('AUTH-007')}  Sensitive Data Exposure (Password Hash in Response)
+  • ${colors.yellow('AUTH-008')}  Unauthenticated File Upload Endpoint
 
 ${colors.bold('SAST & INTRA-FILE TAINT-LITE:')}
   • ${colors.red('SAST-001')}  SQL Injection: Dynamic Query Construction with User Input
@@ -313,6 +314,7 @@ ${colors.bold('SAST & INTRA-FILE TAINT-LITE:')}
   • ${colors.yellow('SAST-008')}  Disabled TLS Certificate Verification
   • ${colors.blue('SAST-009')}  Weak Cryptographic Hash (MD5 / SHA-1)
   • ${colors.blue('SAST-011')}  Open Redirect: Unvalidated URL in Redirect Call
+  • ${colors.yellow('SAST-012')}  Arbitrary File Upload: Unsanitized File Name in Path
   • ${colors.red('TAINT-001')} Taint Flow: Request Input Reaches Command Execution (RCE)
   • ${colors.red('TAINT-002')} Taint Flow: Request Input Reaches Raw SQL Query
   • ${colors.yellow('TAINT-003')} Taint Flow: Request Input Reaches File System Read
@@ -363,7 +365,7 @@ ${colors.bold('AI AGENT & MCP TOOLS:')}
   • ${colors.blue('MCP-004')}   Prompt Injection Concatenation in System Instructions
 
 ${colors.bold('SCA & KNOWN CVE VULNERABILITIES:')}
-  • ${colors.red('CVE-xxxx')}  Known High/Critical Vulnerabilities in Dependencies (npm, PyPI, Go, Composer)
+  • ${colors.red('CVE-xxxx')}  Known High/Critical Vulnerabilities in Dependencies (npm, PyPI, Go, Composer, NuGet)
   • ${colors.bold('Reachability')} AST-guided Reachability Analysis (Flags Imported vs Dormant Vulnerabilities)
   • ${colors.yellow('SUPPLY-001')} Lifecycle Script Exfiltration Risk in package.json
   • ${colors.blue('SUPPLY-002')} Unpinned Git Repository Dependency

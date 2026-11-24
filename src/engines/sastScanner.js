@@ -134,6 +134,19 @@ export const SAST_RULES = [
     regex: /(?:res\.redirect|redirect)\s*\(\s*(?:req\.(?:query|body|params)\b|\brequest\.(?:GET|args)\b|\$_(?:GET|POST)\b)/i,
     description: 'Redirecting users to unvalidated URLs allows phishing attackers to abuse the trusted application domain.',
     remediation: 'Validate redirect targets against an internal URL allowlist or verify that URLs begin with a relative slash `/`.'
+  },
+
+  // 11. Arbitrary File Upload / Path Traversal via Uploaded Filename
+  {
+    id: 'SAST-012',
+    severity: 'HIGH',
+    title: 'Arbitrary File Upload: Unsanitized File Name in Upload / Storage Path',
+    cwe: 'CWE-434',
+    owasp: 'A04:2021-Insecure Design',
+    languages: ['.cs', '.js', '.ts', '.py', '.php'],
+    regex: /(?:Path\.Combine\s*\([^)]*?(?:file|formFile|item|upload)\.FileName\b|Key\s*=\s*(?:file|formFile|item|upload)\.FileName\b|cb\s*\(\s*null\s*,\s*file\.originalname\b|file\.save\s*\([^)]*?file\.filename\b|move_uploaded_file\s*\([^)]*?\$_FILES\[[^\]]+\]\['name'\])/i,
+    description: 'Direct use of client-provided file name (e.g. file.FileName or file.originalname) without sanitization allows directory traversal (e.g. "../../malicious.aspx") or arbitrary S3/local file overwrite.',
+    remediation: 'Never use client-supplied file names directly. In C# use `Path.GetFileName(file.FileName)` or generate a GUID/random name (`$"{Guid.NewGuid()}{extension}"`). In Python use `werkzeug.utils.secure_filename`.'
   }
 ];
 
@@ -215,6 +228,9 @@ export function scanSAST(file) {
         continue;
       }
       if (rule.id === 'SAST-009' && (/^\s*['"`]/.test(line) || /^\s*(?:description|hypothesis|message|summary|detail|doc|comment|prompt|title)\w*\s*[:=]/i.test(line))) {
+        continue;
+      }
+      if (rule.id === 'SAST-012' && (/Path\.GetFileName/i.test(line) || /secure_filename/i.test(line) || /Guid\.NewGuid/i.test(line))) {
         continue;
       }
 
