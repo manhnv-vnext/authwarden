@@ -1,14 +1,15 @@
 import { colors, badge } from '../utils/colors.js';
+import { VERSION } from '../utils/version.js';
 
 export function printTerminalReport(scanResult) {
-  const { findings, stats, targetDir, verifiedMap = {} } = scanResult;
+  const { findings, stats, targetDir } = scanResult;
 
   // Print Banner
   console.log('');
   console.log(colors.cyan(colors.bold('   ___         __  __    _      __              __          ')));
   console.log(colors.blue(colors.bold('  / _ | __ __ / /_/ /_  | | /| / /__ _____ ___ / /__ ___    ')));
   console.log(colors.magenta(colors.bold(' / __ |/ // // __/ _ \\  | |/ |/ / _ `/ __// _  / -_) _ \\   ')));
-  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v1.6.0')));
+  console.log(colors.red(colors.bold('/_/ |_|\\_,_/ \\__/_//_/  |__/|__/\\_,_/_/   \\_,_/\\__/_//_/ ') + colors.gray('v' + VERSION)));
   console.log(colors.gray(' ──────────────────────────────────────────────────────────────────────────'));
   
   // Target & Environment Info
@@ -19,6 +20,15 @@ export function printTerminalReport(scanResult) {
   console.log(` ${colors.green('✔')} Scanned ${colors.bold(stats.filesScanned)} files in ${colors.cyan(stats.durationMs + 'ms')}`);
   if (scanResult.suppressedBaselineCount) {
     console.log(` ${colors.cyan('ℹ')} Baseline: ${colors.bold(scanResult.suppressedBaselineCount)} historical finding(s) suppressed.`);
+  }
+
+  if (stats.osv) {
+    console.log(stats.osv.state === 'ok'
+      ? ` ${colors.green('✔')} OSV.dev: ${colors.bold(stats.osv.packagesQueried)} package version(s) checked, ${colors.bold(stats.osv.vulnerablePackages)} with known advisories`
+      : ` ${colors.yellow('▲')} OSV.dev lookup failed (${stats.osv.message}); results below use the offline database only`);
+  }
+  if (stats.routes?.total) {
+    console.log(` ${colors.green('✔')} Routes: ${colors.bold(stats.routes.total)} discovered, ${colors.bold(stats.routes.unprotected)} without detected auth ${colors.gray('(run "authwarden routes" for the inventory)')}`);
   }
 
   // Coverage Transparency Scorecard
@@ -55,7 +65,7 @@ export function printTerminalReport(scanResult) {
       sevBadge = badge('LOW', colors.bgCyan, colors.black);
     }
 
-    const verification = verifiedMap[finding.rawSecret];
+    const verification = finding.verification;
     let verifyBadge = '';
     if (verification) {
       verifyBadge = verification.verified 
@@ -71,6 +81,9 @@ export function printTerminalReport(scanResult) {
     }
     if (finding.dataFlow) {
       console.log(`   ${colors.yellow('Data Flow:')} Line ${finding.dataFlow.sourceLine} [${colors.gray(finding.dataFlow.sourceCode)}] ${colors.cyan('➔')} Line ${finding.dataFlow.sinkLine} [${colors.red(finding.dataFlow.sinkCode)}]`);
+    }
+    if (finding.confidence) {
+      console.log(`   ${colors.gray('Confidence:')} ${finding.confidence}${finding.cwe ? colors.gray(' · ' + finding.cwe) : ''}`);
     }
     if (finding.description) {
       console.log(`   ${colors.gray('Detail:')}   ${finding.description}`);

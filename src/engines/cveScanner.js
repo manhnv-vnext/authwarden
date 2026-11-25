@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { readText } from '../utils/fileContext.js';
 
 /**
  * Software Composition Analysis (SCA) & CVE Vulnerability Scanner
@@ -355,12 +356,8 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
   const fileName = file.name.toLowerCase();
   const relPath = file.relative.replace(/\\/g, '/');
 
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
-  }
+  const content = readText(file);
+  if (content === null) return findings;
 
   // 1. Scan package.json
   if (fileName === 'package.json') {
@@ -710,7 +707,7 @@ function getCandidateCodes(allFiles, exts = ['.js', '.jsx', '.ts', '.tsx', '.mjs
   return codes;
 }
 
-function checkPackageReachable(pkgName, allFiles, ecosystem = 'npm') {
+export function checkPackageReachable(pkgName, allFiles, ecosystem = 'npm') {
   if (ecosystem === 'maven') {
     const javaCodes = getCandidateCodes(allFiles, ['.java']);
     let nsPattern = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

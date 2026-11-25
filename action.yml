@@ -18,6 +18,10 @@ inputs:
     description: 'Whether to safely verify detected secrets against live APIs'
     required: false
     default: 'false'
+  online:
+    description: 'Look up dependency versions on OSV.dev (sends package names and versions only)'
+    required: false
+    default: 'false'
   format:
     description: 'Output format (terminal, sarif, markdown, json)'
     required: false

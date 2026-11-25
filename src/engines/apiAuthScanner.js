@@ -1,5 +1,5 @@
-import fs from 'fs';
-import path from 'path';
+import { readText, getLines, getCodeLines, isTestPath } from '../utils/fileContext.js';
+import { findNextMiddlewareGuard } from './authContext.js';
 
 /**
  * API & Authorization Scanner
@@ -46,21 +46,74 @@ const RATE_LIMIT_SIGNALS = [
   /bottleneck/i
 ];
 
-export function scanApiAuth(file) {
-  const findings = [];
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
+// Stricter than AUTH_MIDDLEWARE_SIGNALS: used for app.use()/router.use() guards, where
+// generic words such as "session" (express-session) or "token" must not count as auth.
+const UPSTREAM_AUTH_MIDDLEWARE = /\b(?:require|ensure|verify|check|validate|is)_?(?:auth\w*|login|logged\w*|user|admin|token|jwt|session|role\w*|signed\w*)\b|\bauthenticate\w*\b|\bauth(?:Middleware|Guard|Required|orize\w*|enticated)?\b|\bprotect(?:ed)?\b|\bjwt(?:Check|Auth|Middleware)\b|\bexpressjwt\b|\bclerkMiddleware\b|\brequiresAuth\b|passport\.authenticate/i;
+
+const PY_AUTH_DEPENDENCY = /auth|current_user|verify|token|jwt|require|permission|api_key|security|guard|admin/i;
+
+function lineOf(content, index) {
+  return content.slice(0, index).split('\n').length;
+}
+
+/** router.use(auth) / app.use('/prefix', auth) guards declared in an Express file. */
+function collectExpressGuards(content) {
+  const guards = [];
+  const re = /\b(router|app)\.use\s*\(\s*(?:(['"`])([^'"`]+)\2\s*,\s*)?([^;\n]*)/g;
+  let m;
+  while ((m = re.exec(content)) !== null) {
+    const args = m[4] || '';
+    if (/^\s*\w*(?:Router|Routes|router|routes)\b/.test(args)) continue; // sub-router mount
+    if (!UPSTREAM_AUTH_MIDDLEWARE.test(args)) continue;
+    guards.push({ receiver: m[1], prefix: m[3] || null, index: m.index, line: lineOf(content, m.index) });
   }
+  return guards;
+}
+
+/** Text between the parenthesis at openIdx and its matching close. */
+function balancedArgs(content, openIdx) {
+  let depth = 0;
+  for (let i = openIdx; i < content.length && i < openIdx + 2000; i++) {
+    if (content[i] === '(') depth++;
+    else if (content[i] === ')' && --depth === 0) return content.slice(openIdx + 1, i);
+  }
+  return content.slice(openIdx + 1, openIdx + 400);
+}
+
+/** name -> { prefix, guarded } for every APIRouter()/FastAPI() declared in a file. */
+function collectFastApiRouters(content) {
+  const routers = new Map();
+  const re = /\b(\w+)\s*=\s*(?:APIRouter|FastAPI)\s*\(/g;
+  let m;
+  while ((m = re.exec(content)) !== null) {
+    const args = balancedArgs(content, m.index + m[0].length - 1);
+    const prefix = (args.match(/\bprefix\s*=\s*['"]([^'"]*)['"]/) || [])[1] || '';
+    const deps = (args.match(/\bdependencies\s*=\s*\[([\s\S]*?)\]\s*(?:,|$)/) || [])[1] || '';
+    routers.set(m[1], { prefix, guarded: PY_AUTH_DEPENDENCY.test(deps), line: lineOf(content, m.index) });
+  }
+  return routers;
+}
+
+/**
+ * @param file  file descriptor from the walker
+ * @param ctx   optional { project, routes }: project-wide auth context and an
+ *              array that receives one inventory entry per discovered route
+ */
+export function scanApiAuth(file, ctx = {}) {
+  const findings = [];
+  const project = ctx.project || null;
+  const recordRoute = (route) => {
+    if (Array.isArray(ctx.routes)) ctx.routes.push({ ...route, file: file.relative.replace(/\\/g, '/') });
+  };
+  const content = readText(file);
+  if (content === null) return findings;
 
   // Skip test files for auth heuristics
-  if (file.relative.includes('test/') || file.relative.includes('tests/')) {
+  if (isTestPath(file.relative)) {
     return findings;
   }
 
-  const lines = content.split('\n');
+  const lines = getLines(file);
   const relPath = file.relative.replace(/\\/g, '/');
 
   // 1. Next.js App Router API Routes: app/api/**/route.(ts|js)
@@ -77,7 +130,14 @@ export function scanApiAuth(file) {
       const lineNo = content.slice(0, matchIndex).split('\n').length;
       
       const handlerBody = lines.slice(lineNo - 1, lineNo + 40).join('\n');
-      const hasAuth = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(handlerBody));
+      const inHandler = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(handlerBody));
+      const middlewareGuard = inHandler ? null : findNextMiddlewareGuard(project, relPath, routeUrl);
+      const hasAuth = inHandler || Boolean(middlewareGuard);
+      recordRoute({
+        method, path: routeUrl, line: lineNo, framework: 'Next.js',
+        auth: hasAuth ? 'protected' : 'unprotected',
+        evidence: inHandler ? 'auth check in handler' : middlewareGuard ? `middleware (${middlewareGuard})` : 'no auth check found'
+      });
 
       if (isAdmin && !hasAuth) {
         findings.push({
@@ -119,6 +179,12 @@ export function scanApiAuth(file) {
       const hasMutation = /prisma\.|db\.|query\(|delete|update|create|insert/i.test(fnBody);
       const hasAuth = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(fnBody));
 
+      recordRoute({
+        method: 'ACTION', path: fnName + '()', line: lineNo, framework: 'Next.js Server Action',
+        auth: hasAuth ? 'protected' : 'unprotected',
+        evidence: hasAuth ? 'auth check in action' : 'no auth check found'
+      });
+
       if (hasMutation && !hasAuth && !/login|signin|register|signup/i.test(fnName)) {
         findings.push({
           ruleId: 'AUTH-004',
@@ -136,6 +202,7 @@ export function scanApiAuth(file) {
 
   // 3. Express Route Patterns: (router|app).(get|post|put|delete)('/path', ...)
   if (/\b(router|app)\.(get|post|put|delete|patch)\s*\(/i.test(content)) {
+    const expressGuards = collectExpressGuards(content);
     const expressRegex = /\b(router|app)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*([^)]+)\)/g;
     let expMatch;
     while ((expMatch = expressRegex.exec(content)) !== null) {
@@ -145,7 +212,19 @@ export function scanApiAuth(file) {
       const lineNo = content.slice(0, expMatch.index).split('\n').length;
 
       const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(routePath));
-      const hasAuth = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(middlewareChain));
+      const receiver = expMatch[1];
+      const inChain = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(middlewareChain));
+      const guard = inChain ? null : expressGuards.find(g =>
+        g.receiver === receiver && g.index < expMatch.index &&
+        (!g.prefix || routePath === g.prefix || routePath.startsWith(g.prefix.replace(/\/$/, '') + '/')));
+      const hasAuth = inChain || Boolean(guard);
+      recordRoute({
+        method, path: routePath, line: lineNo, framework: 'Express',
+        auth: hasAuth ? 'protected' : 'unprotected',
+        evidence: inChain ? 'auth middleware in route chain'
+          : guard ? `${guard.receiver}.use(${guard.prefix ? `'${guard.prefix}', ` : ''}auth) at line ${guard.line}`
+          : 'no auth middleware found'
+      });
       const isLoginOrAuth = /(?:^|\/)(?:auth\/)?(?:login|signin|token|authenticate|password\/reset)(?:\/|$)/i.test(routePath) && !/crawl|operator|live-login/i.test(routePath);
       const hasRateLimit = RATE_LIMIT_SIGNALS.some(s => s.test(middlewareChain) || s.test(content));
 
@@ -179,16 +258,29 @@ export function scanApiAuth(file) {
 
   // 4. FastAPI / Python Route Patterns
   if (file.ext === '.py') {
-    const pyRouteRegex = /@(app|router)\.(get|post|put|delete|patch)\s*\(\s*['"]([^'"]+)['"]/g;
+    const pyRouters = collectFastApiRouters(content);
+    const pyRouteRegex = /@(\w+)\.(get|post|put|delete|patch)\s*\(\s*['"]([^'"]*)['"]/g;
     let pyMatch;
     while ((pyMatch = pyRouteRegex.exec(content)) !== null) {
+      const routerName = pyMatch[1];
+      const routerInfo = pyRouters.get(routerName);
+      if (!routerInfo && routerName !== 'app' && routerName !== 'router') continue;
       const method = pyMatch[2].toUpperCase();
-      const routePath = pyMatch[3];
+      const routePath = ((routerInfo?.prefix || '') + pyMatch[3]) || '/';
       const lineNo = content.slice(0, pyMatch.index).split('\n').length;
       const fnSignature = lines.slice(lineNo - 1, lineNo + 10).join('\n');
 
       const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(routePath));
-      const hasAuth = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(fnSignature));
+      const inSignature = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(fnSignature));
+      const routerGuarded = Boolean(routerInfo?.guarded);
+      const hasAuth = inSignature || routerGuarded;
+      recordRoute({
+        method, path: routePath, line: lineNo, framework: 'FastAPI',
+        auth: hasAuth ? 'protected' : 'unprotected',
+        evidence: inSignature ? 'security dependency on route'
+          : routerGuarded ? `router dependencies on ${routerName} (line ${routerInfo.line})`
+          : 'no security dependency found'
+      });
 
       if (isAdmin && !hasAuth) {
         findings.push({
@@ -212,7 +304,8 @@ export function scanApiAuth(file) {
       const classRouteMatch = content.match(/\[Route\(\s*["']([^"']+)["']\s*\)\]/i);
       const classRoute = classRouteMatch ? classRouteMatch[1] : '';
       const classHeader = content.slice(0, content.indexOf('class ')).replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-      const classHasAuthorize = /\[Authorize(?:\([^)]*\))?\]/i.test(classHeader);
+      const globalControllerAuth = project?.aspnetFallbackAuth || project?.aspnetControllerAuth || null;
+      const classHasAuthorize = /\[Authorize(?:\([^)]*\))?\]/i.test(classHeader) || Boolean(globalControllerAuth);
 
       const actionRegex = /\[(HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch|Route)(?:\(\s*["']?([^"')\s]*)["']?\s*\))?\](?:\s*\[[^\]]+\])*\s*(?:public|protected)\s+(?:async\s+)?(?:Task<[A-Za-z0-9_<>,\s]+>|[A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g;
       let actMatch;
@@ -234,6 +327,15 @@ export function scanApiAuth(file) {
 
         const isAuthorized = (classHasAuthorize || methodHasAuthorize) && !methodHasAllowAnonymous;
         const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(fullRoute)) || /admin/i.test(actionName);
+        recordRoute({
+          method, path: fullRoute || actionName, line: methodLineNo, framework: 'ASP.NET Core',
+          auth: isAuthorized ? 'protected' : 'unprotected',
+          evidence: methodHasAllowAnonymous ? '[AllowAnonymous]'
+            : methodHasAuthorize ? '[Authorize] on action'
+            : globalControllerAuth ? `global authorization policy (${globalControllerAuth})`
+            : classHasAuthorize ? '[Authorize] on controller'
+            : 'no [Authorize] attribute'
+        });
 
         if (isAdmin && !isAuthorized) {
           findings.push({
@@ -310,8 +412,18 @@ export function scanApiAuth(file) {
       const hasAllowAnonymous = /\.AllowAnonymous\s*\(/i.test(statementChain) || /\[AllowAnonymous\]/i.test(statementChain);
       const isGroupAuthorized = new RegExp(`\\b${caller}\\s*=[^;]*\\.RequireAuthorization\\s*\\(`, 'i').test(content);
 
-      const isAuthorized = (hasAuth || isGroupAuthorized) && !hasAllowAnonymous;
+      const fallbackAuth = project?.aspnetFallbackAuth || null;
+      const isAuthorized = (hasAuth || isGroupAuthorized || Boolean(fallbackAuth)) && !hasAllowAnonymous;
       const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(routePath)) || /admin/i.test(routePath);
+      recordRoute({
+        method: httpVerb, path: routePath, line: lineNo, framework: 'ASP.NET Core Minimal API',
+        auth: isAuthorized ? 'protected' : 'unprotected',
+        evidence: hasAllowAnonymous ? '.AllowAnonymous()'
+          : hasAuth ? '.RequireAuthorization() on endpoint'
+          : isGroupAuthorized ? `.RequireAuthorization() on group ${caller}`
+          : fallbackAuth ? `fallback authorization policy (${fallbackAuth})`
+          : 'no .RequireAuthorization()'
+      });
       const hasFileUpload = /\b(?:IFormFile|IFormFileCollection|IEnumerable<IFormFile>|List<IFormFile>)\b/i.test(statementChain) ||
         /\b(?:Request\.Form\.Files|InitiateMultipartUpload|UploadPart|CompleteMultipartUpload|GetPreSignedURL)/i.test(statementChain);
 
@@ -385,7 +497,7 @@ export function scanApiAuth(file) {
       const classHeader = content.slice(0, content.indexOf('class ')).replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
       const classHasAuth = /@PreAuthorize|@Secured|@RolesAllowed/.test(classHeader);
 
-      const methodRegex = /@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)(?:\(\s*(?:value\s*=\s*)?["']([^"']+)["']\s*\))?(?:\s*@[A-Za-z0-9_]+(?:\([^)]*\))?)*\s*(?:public|protected)\s+(?:ResponseEntity<[A-Za-z0-9_<>,\s]+>|[A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)/g;
+      const methodRegex = /@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)(?:\(\s*(?:value\s*=\s*)?["']([^"']+)["']\s*\))?(?:\s*@[A-Za-z0-9_]+(?:\([^)]*\))?)*\s*(?:public|protected)\s+(?!class\b|interface\b|abstract\b|final\b)(?:ResponseEntity<[A-Za-z0-9_<>,\s]+>|[A-Za-z0-9_<>]+)\s+([A-Za-z0-9_]+)/g;
       let jMatch;
       while ((jMatch = methodRegex.exec(content)) !== null) {
         const ann = jMatch[1];
@@ -401,8 +513,17 @@ export function scanApiAuth(file) {
         const cleanMethodAttributes = rawMethodAttributes.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
         const methodHasAuth = /@PreAuthorize|@Secured|@RolesAllowed/.test(cleanMethodAttributes);
 
-        const isAuthorized = classHasAuth || methodHasAuth;
+        const springGlobal = project?.springGlobalAuth || null;
+        const isAuthorized = classHasAuth || methodHasAuth || Boolean(springGlobal);
         const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(fullRoute)) || /admin/i.test(methodName);
+        recordRoute({
+          method, path: fullRoute || methodName, line: methodLineNo, framework: 'Spring',
+          auth: isAuthorized ? 'protected' : 'unprotected',
+          evidence: methodHasAuth ? 'security annotation on method'
+            : classHasAuth ? 'security annotation on class'
+            : springGlobal ? `SecurityFilterChain anyRequest().authenticated() (${springGlobal})`
+            : 'no security annotation'
+        });
 
         if (isAdmin && !isAuthorized) {
           findings.push({
@@ -456,15 +577,18 @@ export function scanApiAuth(file) {
   }
 
   // 8. BOLA / IDOR Pattern & Sensitive Data Exposure
+  const codeLines = getCodeLines(file);
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
+    const line = codeLines[i] || '';
+    const rawLine = lines[i];
+    if (!line.trim()) continue;
+
     // Pattern: findById(req.params.id) / EF Core FindAsync(id) / Spring Data findById without owner check
     if (/(?:findById|findByPk)\s*\([^)]*?(?:id|req\.params|\$id)|\.FindAsync\s*\(\s*(?:id|orderId|userId|accountId|itemId)\b|\.FirstOrDefault(?:Async)?\s*\(\s*[a-zA-Z0-9_]+\s*=>\s*[a-zA-Z0-9_]+\.Id\s*==\s*id\b|filter_by\(id=|\.filter\([a-zA-Z_]+\.id\s*==\s*id/i.test(line)) {
       const contextBlock = lines.slice(Math.max(0, i - 10), Math.min(lines.length, i + 15)).join('\n');
       const hasOwnerCheck = /user_id|userId|tenant_id|tenantId|owner_id|ownerId|org_id|accountId|req\.user|current_user|User\.FindFirst|ClaimsPrincipal|User\.Identity/i.test(contextBlock);
 
-      if (!hasOwnerCheck && !line.includes('//') && !line.includes('#') &&
+      if (!hasOwnerCheck &&
           !/^\s*['"`]/.test(line) &&
           !/(?:vulnerableCode|content|example|sample|snippet|pattern|description|hypothesis|title|lineNumber|isTarget)\s*[:=]/i.test(line)) {
         findings.push({
@@ -473,7 +597,7 @@ export function scanApiAuth(file) {
           title: 'Potential BOLA / IDOR: Object Query without Ownership Scope',
           file: relPath,
           line: i + 1,
-          snippet: line.trim(),
+          snippet: rawLine.trim(),
           description: 'Database query queries an object directly by identifier without validating ownership against the authenticated user/tenant session.',
           remediation: 'Scope the query to the authenticated user: db.item.findFirst({ where: { id, userId: req.user.id } })'
         });

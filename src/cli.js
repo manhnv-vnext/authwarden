@@ -10,6 +10,8 @@ import { colors } from './utils/colors.js';
 import { getGitChangedFiles } from './utils/git.js';
 import { loadConfig } from './utils/config.js';
 import { saveBaseline, applyBaseline } from './utils/baseline.js';
+import { VERSION } from './utils/version.js';
+import { getCategories } from './rules/catalog.js';
 
 export async function cli(args = []) {
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
@@ -18,7 +20,7 @@ export async function cli(args = []) {
   }
 
   if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
-    console.log('authwarden v1.6.0');
+    console.log(`authwarden v${VERSION}`);
     return 0;
   }
 
@@ -32,12 +34,14 @@ export async function cli(args = []) {
     return listRules();
   }
 
+  const routesOnly = command === 'routes';
+
   // Parse options and positional target argument
   const valFlags = new Set(['--format', '--output', '--fail-on', '--baseline', '--save-baseline', '--config']);
   const positionals = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === 'scan' && i === 0) continue;
+    if ((arg === 'scan' || arg === 'routes') && i === 0) continue;
     if (valFlags.has(arg)) {
       i++; // skip next arg (its value)
       continue;
@@ -69,6 +73,7 @@ export async function cli(args = []) {
   const isWatch = args.includes('--watch') || config.watch === true;
 
   const options = {
+    online: args.includes('--online') || process.env.INPUT_ONLINE === 'true' || config.online === true,
     verify: args.includes('--verify') || process.env.INPUT_VERIFY === 'true' || config.verify === true,
     staged: isStaged,
     watch: isWatch,
@@ -77,6 +82,7 @@ export async function cli(args = []) {
     failOn: getArgValue(args, '--fail-on') || process.env['INPUT_FAIL-ON'] || process.env.INPUT_FAIL_ON || config.failOn || 'high',
     baseline: getArgValue(args, '--baseline') || config.baseline || null,
     saveBaseline: getArgValue(args, '--save-baseline') || null,
+    allowSecrets: config.allowSecrets || [],
     ignoreRules: config.ignoreRules || [],
     ignorePaths: config.ignorePaths || [],
     rulesDir: config.rulesDir || null
@@ -99,6 +105,11 @@ export async function cli(args = []) {
 
   try {
     const scanResult = await runScan(targetDir, options);
+
+    // Route inventory mode: list every discovered endpoint and how it is protected
+    if (routesOnly) {
+      return printRoutes(scanResult, options);
+    }
 
     // Save baseline mode
     if (options.saveBaseline) {
@@ -221,6 +232,39 @@ async function startWatchMode(targetDir, options) {
   }
 }
 
+function printRoutes(scanResult, options) {
+  const routes = scanResult.routes || [];
+  const summary = scanResult.stats.routes || { total: 0, protected: 0, unprotected: 0 };
+
+  if (options.format === 'json') {
+    const text = JSON.stringify({ summary, routes }, null, 2);
+    if (options.output) {
+      fs.writeFileSync(path.resolve(options.output), text, 'utf8');
+      console.log(colors.green(`Route inventory saved to ${options.output}`));
+    } else {
+      console.log(text);
+    }
+    return 0;
+  }
+
+  console.log('');
+  console.log(colors.bold(`Route inventory: ${summary.total} route(s), ${summary.protected} protected, ${summary.unprotected} without detected auth`));
+  console.log(colors.gray('─'.repeat(72)));
+  if (routes.length === 0) {
+    console.log(colors.gray('  No routes discovered (supported: Next.js, Express, FastAPI, ASP.NET Core, Spring).'));
+  }
+  const sorted = [...routes].sort((a, b) => (a.auth === b.auth ? a.path.localeCompare(b.path) : a.auth === 'unprotected' ? -1 : 1));
+  for (const r of sorted) {
+    const status = r.auth === 'protected' ? colors.green('PROTECTED  ') : colors.yellow('UNPROTECTED');
+    console.log(`  ${status} ${colors.bold(r.method.padEnd(7))}${r.path}`);
+    console.log(colors.gray(`              ${r.file}:${r.line} · ${r.framework} · ${r.evidence}`));
+  }
+  console.log('');
+  console.log(colors.gray('  "Unprotected" means no auth was detected statically; public endpoints such as login or health checks are expected here.'));
+  console.log('');
+  return 0;
+}
+
 function getArgValue(args, flag) {
   const idx = args.indexOf(flag);
   if (idx !== -1 && args[idx + 1] && !args[idx + 1].startsWith('-')) {
@@ -237,6 +281,7 @@ ${colors.bold(colors.cyan('AuthWarden'))} - Lightning-fast Static API & Authoriz
 
 ${colors.bold('USAGE:')}
   authwarden scan [path] [options]
+  authwarden routes [path] [--format json]
   authwarden init-hook
   authwarden rules
 
@@ -249,6 +294,7 @@ ${colors.bold('OPTIONS:')}
   --save-baseline <f> Save current scan findings to baseline snapshot file
   --config <file>     Path to custom configuration file (.authwardenrc.json)
   --staged            Scan only staged git changes (fast for pre-commit hooks)
+  --online            Look up dependency versions on OSV.dev (sends package names and versions only)
   --verify            Safely verify detected secrets against live APIs (Stripe, GitHub, OpenAI, Anthropic, Slack)
   -v, --version       Show version number
   -h, --help          Show this help message
@@ -260,7 +306,9 @@ ${colors.bold('EXAMPLES:')}
   $ npx authwarden scan . --save-baseline .authwarden-baseline.json
   $ npx authwarden scan . --baseline .authwarden-baseline.json
   $ npx authwarden scan . --verify
+  $ npx authwarden scan . --online
   $ npx authwarden scan --staged
+  $ npx authwarden routes . --format json --output routes.json
   $ npx authwarden init-hook
 `);
 }
@@ -290,97 +338,22 @@ npx authwarden scan . --staged --fail-on high
 }
 
 function listRules() {
-  console.log(`
-${colors.bold('AuthWarden Core Rule Catalog:')}
-────────────────────────────────────────────────────────────────────────
-${colors.bold('API & AUTHORIZATION:')}
-  • ${colors.red('AUTH-001')}  Shadow Admin Route Missing Auth Middleware
-  • ${colors.yellow('AUTH-002')}  State-Modifying Route Without Auth
-  • ${colors.yellow('AUTH-003')}  Potential BOLA / IDOR Unscoped Object Query
-  • ${colors.yellow('AUTH-004')}  Server Action Missing Identity Check
-  • ${colors.blue('AUTH-005')}  Mass Assignment in Body Handling
-  • ${colors.yellow('AUTH-006')}  Unthrottled Authentication Endpoint (Brute-Force Risk)
-  • ${colors.yellow('AUTH-007')}  Sensitive Data Exposure (Password Hash in Response)
-  • ${colors.yellow('AUTH-008')}  Unauthenticated File Upload Endpoint
-  • ${colors.yellow('AUTH-009')}  Insecure CORS Policy (Arbitrary Origin with Credentials)
-
-${colors.bold('SAST & INTRA-FILE TAINT-LITE:')}
-  • ${colors.red('SAST-001')}  SQL Injection: Dynamic Query Construction with User Input
-  • ${colors.red('SAST-002')}  Command Injection: Untrusted Input in System Shell Call
-  • ${colors.red('SAST-003')}  Dangerous Code Execution via eval() / new Function()
-  • ${colors.yellow('SAST-004')}  Server-Side Request Forgery (SSRF)
-  • ${colors.yellow('SAST-005')}  Path Traversal: Arbitrary File Read / Include
-  • ${colors.yellow('SAST-006')}  Cross-Site Scripting (XSS): dangerouslySetInnerHTML / DOM write
-  • ${colors.red('SAST-007')}  Insecure Deserialization (pickle / unsafe yaml)
-  • ${colors.yellow('SAST-008')}  Disabled TLS Certificate Verification
-  • ${colors.blue('SAST-009')}  Weak Cryptographic Hash (MD5 / SHA-1)
-  • ${colors.blue('SAST-011')}  Open Redirect: Unvalidated URL in Redirect Call
-  • ${colors.yellow('SAST-012')}  Arbitrary File Upload: Unsanitized File Name in Path
-  • ${colors.red('TAINT-001')} Taint Flow: Request Input Reaches Command Execution (RCE)
-  • ${colors.red('TAINT-002')} Taint Flow: Request Input Reaches Raw SQL Query
-  • ${colors.yellow('TAINT-003')} Taint Flow: Request Input Reaches File System Read
-  • ${colors.yellow('TAINT-004')} Taint Flow: Request Input Reaches Outbound HTTP Call (SSRF)
-
-${colors.bold('SECRETS & TOKENS:')}
-  • ${colors.red('SEC-001')}   AWS Access Key ID Exposure
-  • ${colors.red('SEC-002')}   GitHub Personal Access Token Exposure
-  • ${colors.red('SEC-003')}   OpenAI API Secret Key Exposure
-  • ${colors.red('SEC-004')}   Stripe Live Secret Key Exposure
-  • ${colors.yellow('SEC-005')}   Slack Bot / Webhook Token Exposure
-  • ${colors.yellow('SEC-006')}   Google Cloud API Key Exposure
-  • ${colors.red('SEC-007')}   Database Connection String with Credentials
-  • ${colors.red('SEC-008')}   Private Cryptographic Key in Source
-  • ${colors.red('SEC-009')}   Anthropic API Key Exposure
-  • ${colors.yellow('SEC-010')} Generic High-Entropy Secret / Token Exposure
-
-${colors.bold('CONTAINER & CLOUD IAC:')}
-  • ${colors.blue('IAC-001')}   Container Default Execution as Root
-  • ${colors.yellow('IAC-002')}   Insecure Remote Script Pipe (curl | sh)
-  • ${colors.yellow('IAC-003')}   Exposed Database Port in Dockerfile
-  • ${colors.red('IAC-004')}   Docker Daemon Socket Mounted into Container
-  • ${colors.yellow('IAC-005')}   Privileged Container Mode in Docker Compose
-  • ${colors.red('IAC-006')}   Public S3 Bucket in Terraform
-  • ${colors.red('IAC-007')}   Sensitive Port Open to 0.0.0.0/0 in Security Group
-  • ${colors.yellow('IAC-008')}   Kubernetes Pod with Host Network or Host PID
-  • ${colors.yellow('IAC-009')}   Kubernetes Container Allows Privilege Escalation
-  • ${colors.red('IAC-010')}   Secret Baked into Dockerfile ENV Instruction
-  • ${colors.blue('IAC-011')}   Unencrypted Storage Volume / Database in Terraform
-
-${colors.bold('BUSINESS LOGIC & WORKFLOWS:')}
-  • ${colors.yellow('LOGIC-001')} Multi-Step Workflow / Payment Status Evasion via Client Payload
-  • ${colors.yellow('LOGIC-002')} Potential TOCTOU Race Condition on Balance / Coupon State
-  • ${colors.yellow('LOGIC-003')} Unchecked Numeric Input: Negative Price / Quantity Tampering
-  • ${colors.yellow('LOGIC-004')} Insecure JWT Verification: Missing Algorithm Whitelist
-  • ${colors.blue('LOGIC-005')}   Client-Only Logout: Missing Server-Side Session Revocation
-  • ${colors.red('LOGIC-006')}    Disabled JWT Signature or Expiration Validation
-
-${colors.bold('OPENAPI & API SPEC CONTRACTS:')}
-  • ${colors.yellow('SPEC-001')}  Unprotected Sensitive Operation in API Spec
-  • ${colors.yellow('SPEC-002')}  Explicit Public Security Override (security: []) on Restricted Route
-  • ${colors.yellow('SPEC-003')}  Sensitive Credential Passed via URL Query Parameter
-  • ${colors.blue('SPEC-004')}    Insecure Cleartext Transport (HTTP) in Server URL
-  • ${colors.blue('SPEC-005')}    Unconditional Swagger UI Registration in Production
-
-${colors.bold('AI AGENT & MCP TOOLS:')}
-  • ${colors.red('MCP-001')}   Unsandboxed Shell Execution Tool in MCP Config
-  • ${colors.yellow('MCP-002')}   Unrestricted Root Filesystem Path in MCP Server
-  • ${colors.red('MCP-003')}   Hardcoded Secret in MCP Server Config
-  • ${colors.blue('MCP-004')}   Prompt Injection Concatenation in System Instructions
-
-${colors.bold('SCA & KNOWN CVE VULNERABILITIES:')}
-  • ${colors.red('CVE-xxxx')}  Known High/Critical Vulnerabilities in Dependencies (npm, PyPI, Go, Composer, NuGet, Maven)
-  • ${colors.bold('Reachability')} AST-guided Reachability Analysis (Flags Imported vs Dormant Vulnerabilities)
-  • ${colors.yellow('SUPPLY-001')} Lifecycle Script Exfiltration Risk in package.json
-  • ${colors.blue('SUPPLY-002')} Unpinned Git Repository Dependency
-
-${colors.bold('APP CONFIGURATION SECURITY:')}
-  • ${colors.yellow('CONF-001')}  Disabled Database TLS Certificate Validation (TrustServerCertificate=True)
-  • ${colors.blue('CONF-002')}  DetailedErrors Enabled in Application Configuration
-  • ${colors.blue('CONF-003')}  CustomErrors Mode Set to Off in Web.config
-
-${colors.bold('MOBILE APPLICATION SECURITY:')}
-  • ${colors.yellow('MOBILE-001')} Insecure Cleartext Traffic Allowed (Android Network Security Config / iOS ATS)
-  • ${colors.blue('MOBILE-002')} Broad External Storage Permission Requested in AndroidManifest
-`);
+  const sevColor = { CRITICAL: colors.red, HIGH: colors.yellow, MEDIUM: colors.blue, LOW: colors.gray };
+  console.log('');
+  console.log(colors.bold('AuthWarden Core Rule Catalog:'));
+  console.log('─'.repeat(72));
+  for (const { category, rules } of getCategories()) {
+    console.log(colors.bold(category.toUpperCase() + ':'));
+    for (const r of rules) {
+      const paint = sevColor[r.severity] || colors.gray;
+      const meta = colors.gray(`[${r.severity} · confidence ${r.confidence} · ${r.cwe}]`);
+      console.log(`  • ${paint(r.id.padEnd(11))}${r.title} ${meta}`);
+    }
+    console.log('');
+  }
+  console.log(colors.bold('SCA & KNOWN VULNERABILITIES:'));
+  console.log(`  • ${colors.red('CVE-xxxx'.padEnd(11))}Known vulnerable dependency (npm, PyPI, Go, Composer, NuGet, Maven)`);
+  console.log(`  • ${'Reachability'.padEnd(11)} Import-level check: is the vulnerable package imported in source?`);
+  console.log('');
   return 0;
 }

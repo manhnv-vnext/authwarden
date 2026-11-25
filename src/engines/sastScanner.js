@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { readText, getLines, isTestPath } from '../utils/fileContext.js';
 
 /**
  * SAST (Static Application Security Testing) & Taint-Lite Engine
@@ -198,19 +198,15 @@ function escapeRegex(s) {
 
 export function scanSAST(file) {
   const findings = [];
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
-  }
+  const content = readText(file);
+  if (content === null) return findings;
 
   // Skip test fixtures or test directories for SAST checks to prevent false positives
-  if (file.relative.includes('test/') || file.relative.includes('tests/')) {
+  if (isTestPath(file.relative)) {
     return findings;
   }
 
-  const lines = content.split('\n');
+  const lines = getLines(file);
   const relPath = file.relative.replace(/\\/g, '/');
 
   // 1. Direct Pattern Rules

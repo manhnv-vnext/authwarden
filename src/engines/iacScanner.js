@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { readText, getLines } from '../utils/fileContext.js';
 
 /**
  * Infrastructure as Code (IaC) & Container Security Scanner
@@ -10,13 +10,9 @@ export function scanIaC(file) {
   const fileName = file.name.toLowerCase();
   const relPath = file.relative.replace(/\\/g, '/');
 
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
-  }
-  const lines = content.split('\n');
+  const content = readText(file);
+  if (content === null) return findings;
+  const lines = getLines(file);
 
   // 1. Dockerfile Analysis
   if (fileName === 'dockerfile' || fileName.startsWith('dockerfile.')) {

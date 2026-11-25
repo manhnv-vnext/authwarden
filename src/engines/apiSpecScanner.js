@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { readText, getLines } from '../utils/fileContext.js';
 
 /**
  * OpenAPI & API Specification Security Auditor
@@ -22,14 +22,10 @@ export async function scanApiSpecs(file, allFiles = [], options = {}) {
     return findings;
   }
 
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
-  }
+  const content = readText(file);
+  if (content === null) return findings;
 
-  const lines = content.split('\n');
+  const lines = getLines(file);
 
   // Check 1: Insecure HTTP Server URL (SPEC-004)
   lines.forEach((line, idx) => {

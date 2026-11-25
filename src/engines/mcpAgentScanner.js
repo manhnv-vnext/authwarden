@@ -1,9 +1,34 @@
-import fs from 'fs';
+import { readText, getLines, isTestPath } from '../utils/fileContext.js';
 
 /**
  * AI Agent & MCP (Model Context Protocol) Security Scanner
  * Audits AI tool configs, MCP server manifests, and prompt injection boundaries.
  */
+
+// Phrases that have no place in a tool description: they address the model, not the user.
+const TOOL_POISONING = new RegExp([
+  '<\\s*(?:IMPORTANT|SYSTEM|SECRET|HIDDEN|INSTRUCTIONS?)\\s*>',
+  'ignore (?:all |any )?(?:previous|prior|above|other) instructions',
+  'do not (?:tell|mention|inform|reveal|show)[^.\\n]{0,40}\\b(?:user|human)',
+  '(?:before|prior to) (?:using|calling|invoking) (?:this|any|the) tool[^.\\n]{0,120}\\b(?:read|send|include|pass|upload)\\b',
+  '\\b(?:read|send|pass|include|upload)\\b[^.\\n]{0,60}(?:~/\\.ssh|id_rsa|\\.aws/credentials|\\.env\\b)'
+].join('|'), 'i');
+
+const MCP_TOOL_SOURCE = /@mcp\.tool|FastMCP\s*\(|\bserver\.(?:tool|registerTool)\s*\(|new\s+McpServer\s*\(|"inputSchema"\s*:/;
+
+/** Line number and snippet of the first line matching regex (falls back to line 1). */
+function locate(lines, regex, fallbackSnippet, redactValue = false) {
+  const idx = firstLine(lines, regex);
+  if (idx === null) return { line: 1, snippet: fallbackSnippet };
+  let snippet = lines[idx].trim();
+  if (redactValue) snippet = snippet.replace(/(:\s*")[^"]*(")/, '$1***$2');
+  return { line: idx + 1, snippet };
+}
+
+function firstLine(lines, regex) {
+  const idx = lines.findIndex(l => regex.test(l));
+  return idx === -1 ? null : idx;
+}
 
 export function scanMcpAgent(file) {
   const findings = [];
@@ -17,14 +42,29 @@ export function scanMcpAgent(file) {
                         relPath.includes('.cursor') || 
                         relPath.includes('skills/');
 
-  if (!isAgentConfig) return findings;
+  const content = readText(file);
+  if (content === null) return findings;
+  const lines = getLines(file);
 
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
+  // 0. Tool poisoning: hidden instructions inside MCP tool descriptions (MCP-005)
+  if ((isAgentConfig || MCP_TOOL_SOURCE.test(content)) && !isTestPath(relPath)) {
+    lines.forEach((line, idx) => {
+      if (TOOL_POISONING.test(line)) {
+        findings.push({
+          ruleId: 'MCP-005',
+          severity: 'HIGH',
+          title: 'Hidden Instruction in MCP Tool Description (Tool Poisoning)',
+          file: relPath,
+          line: idx + 1,
+          snippet: line.trim().slice(0, 200),
+          description: 'A tool description or prompt contains text addressed to the model (hidden tags, requests to keep something from the user or to read local secrets). MCP clients pass descriptions to the model verbatim, so this can hijack the agent.',
+          remediation: 'Remove model-directed instructions from tool descriptions. Review the server before connecting it and pin its version.'
+        });
+      }
+    });
   }
+
+  if (!isAgentConfig) return findings;
 
   // 1. Unrestricted Shell Execution in MCP Servers
   if (/mcpServers/i.test(content) || /"command"\s*:/i.test(content)) {
@@ -34,8 +74,7 @@ export function scanMcpAgent(file) {
         severity: 'CRITICAL',
         title: 'Unsandboxed Shell Execution Tool in MCP Server Config',
         file: relPath,
-        line: 1,
-        snippet: 'mcpServers: { ... command: "bash" | "powershell" ... }',
+        ...locate(lines, /"command"\s*:\s*"[^"]*\b(?:bash|sh|zsh|cmd\.exe|powershell)\b|\b(?:bash|sh|zsh|cmd\.exe|powershell)\b/i, 'mcpServers: { ... command: "bash" | "powershell" ... }'),
         description: 'An MCP server is configured to spawn an interactive shell without containerization or sandbox boundaries. Prompt injection can lead to direct host compromise.',
         remediation: 'Run MCP tool execution inside a sandboxed container (Docker/gVisor) and restrict permitted subcommands.'
       });
@@ -48,8 +87,7 @@ export function scanMcpAgent(file) {
         severity: 'HIGH',
         title: 'Unrestricted Filesystem Path Given to MCP Server',
         file: relPath,
-        line: 1,
-        snippet: 'allowedDirectories: ["/"]',
+        ...locate(lines, /["'](?:\/|~|\/etc|\/root|C:\\)["']/i, 'allowedDirectories: ["/"]'),
         description: 'AI Agent is granted read/write access to the entire root filesystem or home directory. Any prompt injection can read SSH keys or system secrets.',
         remediation: 'Scope allowed directories strictly to the specific project directory.'
       });
@@ -62,8 +100,7 @@ export function scanMcpAgent(file) {
         severity: 'CRITICAL',
         title: 'Hardcoded Secret / API Token in MCP Configuration',
         file: relPath,
-        line: 1,
-        snippet: 'env: { ... SECRET_KEY: "***" ... }',
+        ...locate(lines, /"[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|AUTH)[A-Z0-9_]*"\s*:\s*"[^"]{12,}"/i, 'env: { ... SECRET_KEY: "***" ... }', true),
         description: 'MCP server configuration bakes sensitive API keys or credentials directly into config files, risking credential exposure via git or tool sharing.',
         remediation: 'Pass sensitive API tokens via runtime process environment variables rather than hardcoding them in MCP JSON manifests.'
       });

@@ -14,7 +14,7 @@ function escapeHtml(str) {
 }
 
 export function generateHtml(scanResult) {
-  const { findings, stats, targetDir, verifiedMap = {} } = scanResult;
+  const { findings, stats, targetDir } = scanResult;
 
   const criticals = findings.filter(f => f.severity === 'CRITICAL').length;
   const highs = findings.filter(f => f.severity === 'HIGH').length;
@@ -34,7 +34,7 @@ export function generateHtml(scanResult) {
     description: f.description || '',
     remediation: f.remediation || '',
     dataFlow: f.dataFlow || null,
-    verified: verifiedMap[f.rawSecret] || null
+    verified: f.verification || null
   }))).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
 
   return `<!DOCTYPE html>

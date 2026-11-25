@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { readText, getLines, getCodeLines, isTestPath } from '../utils/fileContext.js';
 
 /**
  * Business Logic & Authorization Integrity Scanner
@@ -18,7 +18,7 @@ const LOGIC_RULES = [
     description: 'Endpoint trusts client-supplied state flags (e.g. is_paid, payment_status, approved, step) to verify business transactions instead of server-verified state.',
     remediation: 'Enforce a server-side state machine. Never allow client payloads to set payment or approval status directly.',
     test: (line, content) => {
-      if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
+      if (line.includes('test(') || line.includes('ruleId')) return false;
       if (/^\s*['"`]/.test(line) || /(?:vulnerableCode|content|example|sample|snippet|pattern|description|hypothesis|title|lineNumber|isTarget)\s*[:=]/i.test(line)) return false;
       return /(?:req\.body\.(?:is_?paid|payment_?status|approved|is_?verified)|order\.(?:isPaid|status)\s*=\s*req\.body)/i.test(line);
     }
@@ -30,7 +30,7 @@ const LOGIC_RULES = [
     description: 'Non-atomic check-then-act operation detected on financial balance or one-time coupon. Concurrent requests can cause double-spending.',
     remediation: 'Use database transactions with row-level locks (e.g. SELECT FOR UPDATE) or atomic conditional updates (e.g. UPDATE coupons SET used=true WHERE id=? AND used=false).',
     test: (line, content, lines, idx) => {
-      if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
+      if (line.includes('test(') || line.includes('ruleId')) return false;
       const window = lines.slice(idx, Math.min(lines.length, idx + 10)).join('\n');
       return /(?:if\s*\([^)]*balance\s*>=?[^)]*\)[\s\S]{0,120}balance\s*-=|coupon\.isUsed\s*===\s*false[\s\S]{0,120}coupon\.isUsed\s*=\s*true)/i.test(window);
     }
@@ -42,7 +42,7 @@ const LOGIC_RULES = [
     description: 'Calculation multiplies or assigns item quantity or price directly from request input without validating that it is a positive integer.',
     remediation: 'Validate that all quantities and prices are positive numbers greater than zero before performing calculations.',
     test: (line, content) => {
-      if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
+      if (line.includes('test(') || line.includes('ruleId')) return false;
       return /(?:total\s*\+?=\s*[^;]*\*\s*req\.body\.quantity|price\s*:\s*req\.body\.price)/i.test(line);
     }
   },
@@ -53,7 +53,7 @@ const LOGIC_RULES = [
     description: 'jwt.verify() is called without explicitly specifying allowed algorithms, making the application vulnerable to algorithm confusion attacks or "none" algorithm bypass.',
     remediation: 'Pass an explicit algorithm whitelist: jwt.verify(token, secret, { algorithms: ["HS256"] }).',
     test: (line, content) => {
-      if (line.includes('//') || line.includes('test(') || line.includes('ruleId') || line.includes('algorithms')) return false;
+      if (line.includes('test(') || line.includes('ruleId') || line.includes('algorithms')) return false;
       return /jwt\.verify\s*\(\s*[\w$]+\s*,\s*[\w$]+\s*\)/.test(line);
     }
   },
@@ -64,7 +64,7 @@ const LOGIC_RULES = [
     description: 'Logout route merely clears client cookies without invalidating the session token in the server-side store or JWT revocation blocklist.',
     remediation: 'Invalidate the server-side session or record the JWT identifier (jti) in a token revocation blacklist on logout.',
     test: (line, content) => {
-      if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
+      if (line.includes('test(') || line.includes('ruleId')) return false;
       return /(?:router|app)\.(?:post|get)\s*\(\s*['"]\/(?:api\/)?(?:auth\/)?(?:log(?:out|off|in-out)|sign(?:out|-out))/i.test(line) &&
         !content.includes('logout(') && !content.includes('handleLogout') && !content.includes('invalidate') &&
         !content.includes('revoke') && !content.includes('blacklist') && !content.includes('destroy') && !content.includes('deleteSession');
@@ -77,7 +77,7 @@ const LOGIC_RULES = [
     description: 'TokenValidationParameters explicitly disables signature verification (ValidateIssuerSigningKey = false, RequireSignedTokens = false) or expiration checks (ValidateLifetime = false), allowing forged or expired tokens to be accepted.',
     remediation: 'Always enable signature verification and expiration: ValidateIssuerSigningKey = true, RequireSignedTokens = true, and ValidateLifetime = true.',
     test: (line, content) => {
-      if (line.includes('//') || line.includes('test(') || line.includes('ruleId')) return false;
+      if (line.includes('test(') || line.includes('ruleId')) return false;
       if (/^\s*['"`]/.test(line) || /(?:vulnerableCode|content|example|sample|snippet|pattern|description|hypothesis|title|lineNumber|isTarget)\s*[:=]/i.test(line)) return false;
       return /(?:ValidateIssuerSigningKey\s*=\s*false|RequireSignedTokens\s*=\s*false|ValidateLifetime\s*=\s*false)/i.test(line);
     }
@@ -95,31 +95,30 @@ export async function scanBusinessLogic(file, allFiles = [], options = {}) {
 
   // Skip vendor / test files
   const relPath = file.relative.replace(/\\/g, '/');
-  if (relPath.includes('node_modules') || relPath.includes('test/') || relPath.includes('tests/')) {
+  if (relPath.includes('node_modules') || isTestPath(relPath)) {
     return findings;
   }
 
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
-  }
+  const content = readText(file);
+  if (content === null) return findings;
 
-  const lines = content.split('\n');
+  const lines = getLines(file);
+  // Rules run on comment-stripped code so a trailing comment or URL never hides a real hit
+  const codeLines = getCodeLines(file);
 
-  for (let idx = 0; idx < lines.length; idx++) {
-    const line = lines[idx];
+  for (let idx = 0; idx < codeLines.length; idx++) {
+    const line = codeLines[idx];
+    if (!line.trim()) continue;
 
     for (const rule of LOGIC_RULES) {
-      if (rule.test(line, content, lines, idx)) {
+      if (rule.test(line, content, codeLines, idx)) {
         findings.push({
           ruleId: rule.id,
           severity: rule.severity,
           title: rule.title,
           file: relPath,
           line: idx + 1,
-          snippet: line.trim(),
+          snippet: lines[idx].trim(),
           description: rule.description,
           remediation: rule.remediation
         });

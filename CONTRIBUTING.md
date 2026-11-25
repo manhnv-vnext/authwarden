@@ -13,7 +13,14 @@ Adding a new rule is straightforward:
    - `src/engines/secretScanner.js`: High-entropy tokens, credentials, keys.
    - `src/engines/iacScanner.js`: Dockerfile, Docker Compose, Terraform misconfigurations.
    - `src/engines/supplyChainScanner.js`: Malicious scripts, package integrity.
-   - `src/engines/mcpAgentScanner.js`: AI agent configs, MCP tool permissions.
+   - `src/engines/mcpAgentScanner.js`: AI agent configs, MCP tool permissions, tool poisoning.
+   - `src/engines/sastScanner.js`: Injection, SSRF, path traversal and intra-file taint flows.
+   - `src/engines/businessLogicScanner.js`: Workflow, race-condition and JWT logic flaws.
+   - `src/engines/apiSpecScanner.js`: OpenAPI / Swagger / Postman contracts.
+   - `src/engines/cveScanner.js` and `src/engines/osvScanner.js`: Offline CVE list and opt-in OSV.dev lookup.
+   - `src/engines/authContext.js`: Project-wide auth guards (middleware, fallback policies).
+
+   Read files through `src/utils/fileContext.js` (`readText`, `getLines`, `getCodeLines`) so content is loaded once per scan and comments are stripped consistently.
 
 2. **Add a rule entry:**
    Each finding follows this clean format:
@@ -30,14 +37,16 @@ Adding a new rule is straightforward:
    });
    ```
 
-3. **Add a unit test in `test/`** to ensure your rule fires on vulnerable code and ignores safe patterns.
+3. **Register the rule in `src/rules/catalog.js`** (category, severity, confidence, CWE) and add a row to the README rule table. `test/catalog.test.js` fails if the engine, catalog and README disagree.
 
-4. **Run the test suite:**
+4. **Add a unit test in `test/`** to ensure your rule fires on vulnerable code and ignores safe patterns.
+
+5. **Run the test suite:**
    ```bash
    npm test
    ```
 
-5. **Submit a Pull Request** with a brief description and link to any relevant CVE or OWASP category!
+6. **Submit a Pull Request** with a brief description and link to any relevant CVE or OWASP category!
 
 ---
 

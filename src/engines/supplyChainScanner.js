@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { readText } from '../utils/fileContext.js';
 
 /**
  * Supply Chain Security Scanner
@@ -13,8 +13,7 @@ export function scanSupplyChain(file) {
 
   let pkg;
   try {
-    const raw = fs.readFileSync(file.path, 'utf8');
-    pkg = JSON.parse(raw);
+    pkg = JSON.parse(readText(file));
   } catch {
     return findings;
   }

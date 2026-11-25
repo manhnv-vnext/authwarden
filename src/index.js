@@ -11,6 +11,9 @@ import { scanCVEs } from './engines/cveScanner.js';
 import { scanBusinessLogic } from './engines/businessLogicScanner.js';
 import { scanApiSpecs } from './engines/apiSpecScanner.js';
 import { verifySecret } from './verifier/secretVerifier.js';
+import { enrichFinding } from './rules/catalog.js';
+import { buildProjectAuthContext } from './engines/authContext.js';
+import { scanOsv } from './engines/osvScanner.js';
 
 export async function runScan(targetPath = '.', options = {}) {
   const startTime = Date.now();
@@ -119,15 +122,18 @@ export async function runScan(targetPath = '.', options = {}) {
 
   const allFindings = [];
 
+  // Upstream auth (Next.js middleware, ASP.NET fallback policy, Spring filter chain) + route inventory
+  const authCtx = { project: buildProjectAuthContext(files), routes: [] };
+
   for (const file of files) {
     // 1. API & Auth Scanner
     if (['.js', '.ts', '.jsx', '.tsx', '.mjs', '.py', '.cs', '.java'].includes(file.ext)) {
-      const apiFindings = scanApiAuth(file);
+      const apiFindings = scanApiAuth(file, authCtx);
       allFindings.push(...apiFindings);
     }
 
     // 2. Secret Scanner (all text files)
-    const secretFindings = scanSecrets(file);
+    const secretFindings = scanSecrets(file, options);
     allFindings.push(...secretFindings);
 
     // 3. SAST & Intra-file Taint-Lite Scanner
@@ -164,6 +170,20 @@ export async function runScan(targetPath = '.', options = {}) {
     // 9. OpenAPI & API Specification Auditor
     const specFindings = await scanApiSpecs(file, files, options);
     allFindings.push(...specFindings);
+  }
+
+  // 9b. Online SCA via OSV.dev (opt-in: sends package names and versions only)
+  let osvStatus;
+  if (options.online) {
+    const osv = await scanOsv(files, options);
+    osvStatus = osv.status;
+    const known = new Set(allFindings.map(f => `${f.ruleId}|${f.file}`));
+    for (const f of osv.findings) {
+      const key = `${f.ruleId}|${f.file}`;
+      if (known.has(key)) continue; // already reported by the offline database
+      known.add(key);
+      allFindings.push(f);
+    }
   }
 
   // 10. Custom Organization Rules Loader (from rules/*.json or options.rulesDir)
@@ -247,15 +267,20 @@ export async function runScan(targetPath = '.', options = {}) {
   });
 
   // Active Verification (if enabled)
-  const verifiedMap = {};
   if (options.verify) {
+    const verifyCache = new Map(); // raw secret -> result, kept in memory only
     for (const f of activeFindings) {
-      if (f.rawSecret && !verifiedMap[f.rawSecret]) {
-        const v = await verifySecret(f);
-        if (v) verifiedMap[f.rawSecret] = v;
+      if (!f.rawSecret) continue;
+      if (!verifyCache.has(f.rawSecret)) {
+        verifyCache.set(f.rawSecret, await verifySecret(f));
       }
+      const v = verifyCache.get(f.rawSecret);
+      if (v) f.verification = v;
     }
   }
+
+  // Attach catalog metadata (CWE, confidence, category)
+  activeFindings.forEach(enrichFinding);
 
   // Sort findings by severity
   const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
@@ -340,16 +365,21 @@ export async function runScan(targetPath = '.', options = {}) {
     });
   }
 
+  const routes = authCtx.routes;
+  const protectedRoutes = routes.filter(r => r.auth === 'protected').length;
+
   const durationMs = Date.now() - startTime;
 
   return {
     targetDir: rootDir,
     findings: activeFindings,
-    verifiedMap,
+    routes,
     stats: {
       filesScanned: files.length,
       frameworks: Array.from(frameworks),
       coverageScorecard,
+      routes: { total: routes.length, protected: protectedRoutes, unprotected: routes.length - protectedRoutes },
+      ...(osvStatus ? { osv: osvStatus } : {}),
       durationMs
     }
   };

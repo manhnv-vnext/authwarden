@@ -1,6 +1,20 @@
 /**
  * SARIF 2.1.0 Exporter for GitHub Code Scanning
  */
+import crypto from 'crypto';
+import { VERSION } from '../utils/version.js';
+import { getRule } from '../rules/catalog.js';
+import { generateFingerprint } from '../utils/baseline.js';
+
+const HELP_URI = 'https://github.com/manhnv-vnext/authwarden#-rule-catalog';
+
+// GitHub maps security-severity to critical (>=9), high (>=7), medium (>=4), low
+const SECURITY_SEVERITY = { CRITICAL: '9.5', HIGH: '8.0', MEDIUM: '5.5', LOW: '3.0' };
+const PRECISION = { HIGH: 'high', MEDIUM: 'medium', LOW: 'low' };
+
+function sarifLevel(severity) {
+  return severity === 'CRITICAL' || severity === 'HIGH' ? 'error' : 'warning';
+}
 
 export function generateSarif(scanResult) {
   const { findings } = scanResult;
@@ -9,24 +23,31 @@ export function generateSarif(scanResult) {
   const ruleSet = new Set();
 
   findings.forEach(f => {
-    if (!ruleSet.has(f.ruleId)) {
-      ruleSet.add(f.ruleId);
-      sarifRules.push({
-        id: f.ruleId,
-        name: f.title,
-        shortDescription: { text: f.title },
-        fullDescription: { text: f.description || f.title },
-        defaultConfiguration: {
-          level: f.severity === 'CRITICAL' || f.severity === 'HIGH' ? 'error' : 'warning'
-        },
-        help: { text: f.remediation || 'Remediate according to security guidelines.' }
-      });
-    }
+    if (ruleSet.has(f.ruleId)) return;
+    ruleSet.add(f.ruleId);
+    const meta = getRule(f.ruleId);
+    const cwe = f.cwe || meta?.cwe;
+    const tags = ['security'];
+    if (cwe) tags.push('external/cwe/' + cwe.toLowerCase());
+    sarifRules.push({
+      id: f.ruleId,
+      name: meta?.title || f.title,
+      shortDescription: { text: meta?.title || f.title },
+      fullDescription: { text: f.description || f.title },
+      defaultConfiguration: { level: sarifLevel(f.severity) },
+      help: { text: f.remediation || 'Remediate according to security guidelines.' },
+      helpUri: HELP_URI,
+      properties: {
+        tags,
+        precision: PRECISION[f.confidence || meta?.confidence] || 'medium',
+        'security-severity': SECURITY_SEVERITY[f.severity] || '5.5'
+      }
+    });
   });
 
   const sarifResults = findings.map(f => ({
     ruleId: f.ruleId,
-    level: f.severity === 'CRITICAL' || f.severity === 'HIGH' ? 'error' : 'warning',
+    level: sarifLevel(f.severity),
     message: { text: `${f.title}: ${f.description || ''}` },
     locations: [
       {
@@ -37,7 +58,11 @@ export function generateSarif(scanResult) {
           }
         }
       }
-    ]
+    ],
+    // Line-independent so alerts stay matched when code above them moves
+    partialFingerprints: {
+      'authwarden/v1': crypto.createHash('sha256').update(generateFingerprint(f)).digest('hex')
+    }
   }));
 
   return JSON.stringify({
@@ -48,7 +73,7 @@ export function generateSarif(scanResult) {
         tool: {
           driver: {
             name: 'AuthWarden',
-            semanticVersion: '1.6.0',
+            semanticVersion: VERSION,
             informationUri: 'https://github.com/manhnv-vnext/authwarden',
             rules: sarifRules
           }

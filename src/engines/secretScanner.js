@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { readText, getLines, isTestPath } from '../utils/fileContext.js';
 
 /**
  * Secret Scanner with Precision Regexes and Automatic Redaction.
@@ -100,24 +100,38 @@ export function redactSecret(secret) {
   return `${prefix}${'*'.repeat(Math.max(6, secret.length - 7))}${suffix}`;
 }
 
-export function scanSecrets(file) {
-  const findings = [];
-  let content;
-  try {
-    content = fs.readFileSync(file.path, 'utf8');
-  } catch {
-    return findings;
+function compileAllowlist(patterns) {
+  if (!Array.isArray(patterns)) return [];
+  const compiled = [];
+  for (const p of patterns) {
+    try {
+      compiled.push(new RegExp(p));
+    } catch {
+      // ignore invalid allowlist pattern
+    }
   }
+  return compiled;
+}
+
+/**
+ * @param options.allowSecrets  regex strings; a match against the secret value or its
+ *                              source line suppresses the finding (known test keys, etc.)
+ */
+export function scanSecrets(file, options = {}) {
+  const findings = [];
+  const allowlist = compileAllowlist(options.allowSecrets);
+  const content = readText(file);
+  if (content === null) return findings;
 
   // Skip files that usually have placeholders or tests
-  if (file.relative.includes('test/') || file.relative.includes('.example')) {
+  if (isTestPath(file.relative) || file.relative.includes('.example')) {
     // If it's a test file, only report if it's not a generic dummy value
     if (content.includes('dummy') || content.includes('placeholder') || content.includes('fake')) {
       return findings;
     }
   }
 
-  const lines = content.split('\n');
+  const lines = getLines(file);
 
   for (const rule of SECRET_RULES) {
     let match;
@@ -142,20 +156,27 @@ export function scanSecrets(file) {
       const lineNo = content.slice(0, matchIndex).split('\n').length;
       const lineText = lines[lineNo - 1] || '';
 
+      if (allowlist.some(rx => rx.test(secretValue) || rx.test(lineText))) {
+        continue;
+      }
+
       const redactedSnippet = lineText.replace(secretValue, redactSecret(secretValue)).trim();
 
-      findings.push({
+      const finding = {
         ruleId: rule.id,
         severity: rule.severity,
         title: `${rule.name} Exposed in Source`,
         file: file.relative.replace(/\\/g, '/'),
         line: lineNo,
         secretType: rule.type,
-        rawSecret: secretValue, // Kept in memory only for optional live verification
         snippet: redactedSnippet,
         description: `Found raw ${rule.name}. Hardcoded credentials can be exploited for unauthorized access or automated scraping.`,
         remediation: `Immediately revoke this credential, rotate it, and store it in environment variables or a Secret Manager (e.g. AWS Secrets Manager, Doppler).`
-      });
+      };
+      // Non-enumerable: available in memory for optional live verification, but never
+      // serialized into JSON / SARIF / baseline output.
+      Object.defineProperty(finding, 'rawSecret', { value: secretValue, enumerable: false });
+      findings.push(finding);
     }
   }
 
