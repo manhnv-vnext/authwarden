@@ -14,6 +14,7 @@ import { verifySecret } from './verifier/secretVerifier.js';
 import { enrichFinding } from './rules/catalog.js';
 import { buildProjectAuthContext } from './engines/authContext.js';
 import { scanOsv } from './engines/osvScanner.js';
+import { DEPENDENCY_FILES } from './engines/dependencies.js';
 
 export async function runScan(targetPath = '.', options = {}) {
   const startTime = Date.now();
@@ -156,7 +157,7 @@ export async function runScan(targetPath = '.', options = {}) {
 
     // 7. CVE & Software Composition Analysis (SCA) Scanner
     if (
-      ['package.json', 'package-lock.json', 'requirements.txt', 'go.mod', 'composer.json', 'packages.lock.json', 'directory.packages.props', 'pom.xml'].includes(file.name.toLowerCase()) ||
+      DEPENDENCY_FILES.has(file.name.toLowerCase()) ||
       file.ext === '.csproj'
     ) {
       const cveFindings = await scanCVEs(file, files, options);

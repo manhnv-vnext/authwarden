@@ -247,3 +247,100 @@ test('routes command prints the inventory as JSON', async () => {
   assert.equal(parsed.routes[0].path, '/orders');
   assert.equal(parsed.summary.total, 1);
 });
+
+test('Express: route-looking text inside a string literal is not a route', async () => {
+  const result = await scan({
+    'src/help.js': [
+      "const hint = `Apply a limiter: router.post('/login', authLimiter, handler);`;",
+      "const doc = \"Example: app.get('/admin/stats', stats)\";",
+      "app.get('/real', handler);"
+    ].join('\n')
+  });
+  assert.deepEqual(result.routes.map(r => r.path), ['/real']);
+  assert.equal(ids(result, 'AUTH-001').length, 0);
+});
+
+// ---------- Regressions found by scanning OWASP NodeGoat ----------
+
+test('Express: a handler whose name contains "session" or "auth" is not middleware', async () => {
+  const result = await scan({
+    'src/routes.js': [
+      "app.get('/admin/sessions', sessionHandler.listAll);",
+      "app.get('/admin/tokens', authController.listTokens);"
+    ].join('\n')
+  });
+  assert.equal(ids(result, 'AUTH-001').length, 2);
+  assert.equal(route(result, '/admin/sessions').auth, 'unprotected');
+});
+
+test('Express: isLoggedIn-style middleware is recognised', async () => {
+  const result = await scan({
+    'src/routes.js': [
+      "app.get('/admin/stats', isLoggedIn, statsHandler.show);",
+      "app.get('/admin/users', ensureLoggedIn('/login'), usersHandler.list);"
+    ].join('\n')
+  });
+  assert.equal(ids(result, 'AUTH-001').length, 0);
+  assert.equal(route(result, '/admin/stats').auth, 'protected');
+  assert.equal(route(result, '/admin/users').auth, 'protected');
+});
+
+test('Express: call-expression middleware and handler wrappers count as auth', async () => {
+  const result = await scan({
+    'src/routes.js': [
+      "app.post('/admin/import', passport.authenticate('jwt', { session: false }), importHandler);",
+      "app.get('/admin/export', requireAuth(exportHandler));"
+    ].join('\n')
+  });
+  assert.equal(ids(result, 'AUTH-001').length, 0);
+});
+
+test('Express: commented-out routes are not part of the inventory', async () => {
+  const result = await scan({
+    'src/routes.js': [
+      "app.get('/benefits', isLoggedIn, benefits.show);",
+      '/* Fix for A7:',
+      " app.get('/admin/benefits', isLoggedIn, isAdmin, benefits.show);",
+      ' */',
+      "// app.delete('/admin/purge', purge);"
+    ].join('\n')
+  });
+  assert.deepEqual(result.routes.map(r => r.path), ['/benefits']);
+  assert.equal(ids(result, 'AUTH-001').length, 0);
+});
+
+// ---------- Regressions found by scanning OWASP Juice Shop ----------
+
+test('Express: a deny-all or authorisation guard used as the only argument protects the route', async () => {
+  const result = await scan({
+    'server.ts': [
+      "app.delete('/admin/products/:id', security.denyAll())",
+      "app.get('/admin/users', security.isAuthorized())",
+      "app.get('/admin/version', utils.asyncHandler(retrieveAppVersion()))"
+    ].join('\n')
+  });
+  const flagged = ids(result, 'AUTH-001');
+  assert.equal(flagged.length, 1);
+  assert.match(flagged[0].title, /\/admin\/version/);
+});
+
+test('AUTH-003 ignores lookups keyed by the authenticated user\'s own id', async () => {
+  const lookup = 'findBy' + 'Pk';
+  const result = await scan({
+    'routes/password.ts': [
+      'export async function changePassword(req, res) {',
+      `  const user = await UserModel.${lookup}(loggedInUser.data.id)`,
+      '  res.json(user)',
+      '}'
+    ].join('\n'),
+    'routes/coupon.ts': [
+      'export async function applyCoupon(req, res) {',
+      '  const id = req.params.id',
+      `  const basket = await BasketModel.${lookup}(id)`,
+      '  res.json(basket)',
+      '}'
+    ].join('\n')
+  });
+  const flagged = ids(result, 'AUTH-003');
+  assert.deepEqual(flagged.map(f => f.file), ['routes/coupon.ts']);
+});

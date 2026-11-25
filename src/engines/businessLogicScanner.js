@@ -54,7 +54,7 @@ const LOGIC_RULES = [
     remediation: 'Pass an explicit algorithm whitelist: jwt.verify(token, secret, { algorithms: ["HS256"] }).',
     test: (line, content) => {
       if (line.includes('test(') || line.includes('ruleId') || line.includes('algorithms')) return false;
-      return /jwt\.verify\s*\(\s*[\w$]+\s*,\s*[\w$]+\s*\)/.test(line);
+      return /jwt\.verify\s*\(\s*[\w$.]+\s*,\s*[\w$.]+\s*\)/.test(line);
     }
   },
   {

@@ -1,6 +1,6 @@
 {
   "name": "authwarden-cli",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Lightning-fast Static API & Authorization Vulnerability Scanner for Modern Web & Cloud",
   "main": "src/index.js",
   "exports": "./src/index.js",
@@ -28,7 +28,9 @@
   "scripts": {
     "start": "node bin/authwarden.js",
     "scan": "node bin/authwarden.js scan .",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "bench": "node scripts/benchmark.mjs",
+    "update-cve-db": "node scripts/update-cve-db.mjs"
   },
   "keywords": [
     "security",

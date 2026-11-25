@@ -1,11 +1,10 @@
-import path from 'path';
-import { readText, getLines } from '../utils/fileContext.js';
+import { extractDependencies } from './dependencies.js';
 import { checkPackageReachable } from './cveScanner.js';
 
 /**
  * Online SCA via OSV.dev (opt-in with --online).
  *
- * The built-in CVE database is a small curated list that works offline. This
+ * The built-in CVE database is an offline snapshot covering a fixed set of packages. This
  * module complements it: resolved dependency versions are looked up in the
  * OSV database. Only { ecosystem, package name, version } leave the machine;
  * no file paths, source code or project identifiers are sent.
@@ -17,88 +16,7 @@ const DETAIL_CONCURRENCY = 8;
 const TIMEOUT_MS = 15000;
 
 const SEVERITY_MAP = { CRITICAL: 'CRITICAL', HIGH: 'HIGH', MODERATE: 'MEDIUM', MEDIUM: 'MEDIUM', LOW: 'LOW' };
-const EXACT_VERSION = /^\d+(?:\.\d+)*(?:[-+.][0-9A-Za-z.-]+)?$/;
-
-function lineContaining(file, text) {
-  const idx = getLines(file).findIndex(l => l.includes(text));
-  return idx === -1 ? 1 : idx + 1;
-}
-
-/**
- * Dependencies with a concrete version declared in a manifest or lockfile.
- * Returns [{ ecosystem, name, version, line, declaredRange? }] using OSV ecosystem names.
- */
-export function extractDependencies(file, allFiles = []) {
-  const name = file.name.toLowerCase();
-  const content = readText(file);
-  if (content === null) return [];
-  const deps = [];
-  const add = (ecosystem, pkg, version, extra = {}) => {
-    const v = String(version || '').trim().replace(/^v/, '');
-    if (!pkg || !EXACT_VERSION.test(v)) return;
-    deps.push({ ecosystem, name: pkg, version: v, line: lineContaining(file, pkg), ...extra });
-  };
-
-  try {
-    if (name === 'package-lock.json') {
-      const lock = JSON.parse(content);
-      if (lock.packages) {
-        for (const [pkgPath, info] of Object.entries(lock.packages)) {
-          if (!pkgPath || !info || info.link) continue;
-          add('npm', pkgPath.replace(/^.*node_modules\//, ''), info.version);
-        }
-      } else if (lock.dependencies) {
-        for (const [dep, info] of Object.entries(lock.dependencies)) add('npm', dep, info?.version);
-      }
-    } else if (name === 'package.json') {
-      // A lockfile next to the manifest is the source of truth; ranges are only a fallback
-      const dir = path.dirname(file.path);
-      const hasLock = allFiles.some(f => f.name.toLowerCase() === 'package-lock.json' && path.dirname(f.path) === dir);
-      if (!hasLock) {
-        const pkg = JSON.parse(content);
-        for (const [dep, spec] of Object.entries({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })) {
-          if (typeof spec !== 'string') continue;
-          add('npm', dep, spec.replace(/^[\^~>=<\s]+/, ''), { declaredRange: spec });
-        }
-      }
-    } else if (name === 'packages.lock.json') {
-      const lock = JSON.parse(content);
-      for (const group of Object.values(lock.dependencies || {})) {
-        for (const [dep, info] of Object.entries(group || {})) add('NuGet', dep, info?.resolved || info?.version);
-      }
-    } else if (name === 'composer.lock') {
-      const lock = JSON.parse(content);
-      for (const p of [...(lock.packages || []), ...(lock['packages-dev'] || [])]) add('Packagist', p.name, p.version);
-    } else if (name === 'requirements.txt') {
-      for (const line of content.split('\n')) {
-        const m = line.split('#')[0].trim().match(/^([A-Za-z0-9_.\-]+)(?:\[[^\]]*\])?\s*==\s*([^\s;]+)/);
-        if (m) add('PyPI', m[1], m[2]);
-      }
-    } else if (name === 'go.mod') {
-      for (const line of content.split('\n')) {
-        const m = line.trim().replace(/^require\s+/, '').match(/^([A-Za-z0-9.\-_/~]+\.[A-Za-z0-9.\-_/~]+)\s+v(\d[^\s]*)/);
-        if (m) add('Go', m[1], m[2].replace(/\+incompatible$/, ''));
-      }
-    } else if (name === 'pom.xml') {
-      for (const m of content.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)) {
-        const group = (m[1].match(/<groupId>([^<]+)<\/groupId>/i) || [])[1];
-        const artifact = (m[1].match(/<artifactId>([^<]+)<\/artifactId>/i) || [])[1];
-        const version = (m[1].match(/<version>([^<]+)<\/version>/i) || [])[1];
-        if (group && artifact) add('Maven', `${group.trim()}:${artifact.trim()}`, version, { importName: artifact.trim() });
-      }
-    } else if (file.ext === '.csproj' || name === 'directory.packages.props') {
-      for (const m of content.matchAll(/<(?:PackageReference|PackageVersion)\b[^>]*>/gi)) {
-        const inc = (m[0].match(/\bInclude=["']([^"']+)["']/i) || [])[1];
-        const ver = (m[0].match(/\bVersion=["']([^"']+)["']/i) || [])[1];
-        add('NuGet', inc, ver);
-      }
-    }
-  } catch {
-    // malformed manifest: nothing to query
-  }
-
-  return deps;
-}
+export { extractDependencies } from './dependencies.js';
 
 async function fetchJson(fetchImpl, url, init) {
   const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });

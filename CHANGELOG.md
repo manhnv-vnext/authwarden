@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.8.0
+
+### Fixed
+- Offline CVE database was hand-written with a single "fixed version" per entry; checked against OSV.dev, 25 of 30 entries had wrong ranges or did not exist for that package (for example lodash 4.17.20 was reported for CVE-2020-8203, fixed in 4.17.19). It is now a generated OSV.dev snapshot (`src/data/cve-db.json`, 684 advisories for 31 packages) matched by real affected ranges, and one package version can report several advisories. Severities now come from the advisory.
+- Piped output larger than the pipe buffer was truncated (`authwarden scan . --format json | jq`) because the process exited before stdout flushed.
+- Express route analysis treated the handler as middleware, so a handler named `sessionHandler.x` or `authController.y` made the route look protected. Only arguments between the path and the handler count now, plus wrapper calls such as `requireAuth(handler)`.
+- Commented-out Express routes and route-looking text inside string literals were listed as routes.
+- `isLoggedIn` / `ensureLoggedIn` / `login_required` and deny-all guards were not recognised as auth.
+- `AUTH-003` no longer flags lookups keyed by the caller's own identity (`findByPk(loggedInUser.data.id)`).
+- `SEC-007` no longer flags connection strings whose password is a template placeholder.
+- `TAINT-002` no longer flags a tainted value passed as a bound parameter next to a literal SQL string.
+- `SAST-004` no longer flags calls to a configured or constant URL with no request input on the line.
+
+### Added
+- `yarn.lock` (v1 and Berry), `pnpm-lock.yaml` (v5 to v9) and `poetry.lock` support, offline and with `--online`.
+- Fastify routes and `addHook` auth guards in the route inventory.
+- Cross-file Express guards: a router module mounted behind auth (`app.use(requireAuth); app.use(adminRouter)`) is treated as protected.
+- Auth checks inside an inline handler body (`if (!req.user?.isAdmin) return res.sendStatus(403)`).
+- `AUTH-003` covers Prisma `findUnique` / `findFirst` by id; `LOGIC-004` covers `jwt.verify(token, process.env.SECRET)`.
+- `npm run bench`: labelled regression corpus (70 cases) with per-rule precision and recall; `npm test` fails when a case changes outcome.
+- `npm run update-cve-db`: regenerates the offline snapshot from OSV.dev.
+
+### Changed
+- Projects with outdated dependencies will see more SCA findings than before, because every advisory for an affected version is reported instead of one per package.
+
 ## 1.7.0
 
 ### Security

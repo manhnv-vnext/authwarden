@@ -85,7 +85,7 @@ Traditional SAST scanners (SonarQube, Fortify, Snyk) were built two decades ago 
 
 1. **Focus on Access Control & Logic:** Natively understands Next.js App Router, Server Actions, FastAPI, Express, Django, Go, Java Spring Boot, and C# / ASP.NET Core (.NET 8/9/10). Flags unauthenticated mutating endpoints and database queries lacking tenant ownership filters (`BOLA / IDOR`).
 2. **Secret Detection with Active Verification:** Provider-specific patterns plus Shannon entropy for generic tokens. Secrets are redacted in every output format (`sk_live_***`), and `--verify` performs read-only live checks against GitHub, Stripe, OpenAI, Anthropic and Slack.
-3. **Import-Aware Dependency Scanner:** Flags known-vulnerable dependencies and tells you whether the package is actually **imported** somewhere in your source (an import-level check, not call-graph analysis). Works offline from a small curated list; add `--online` to query the full [OSV.dev](https://osv.dev) database.
+3. **Import-Aware Dependency Scanner:** Flags known-vulnerable dependencies and tells you whether the package is actually **imported** somewhere in your source (an import-level check, not call-graph analysis). Works offline from a snapshot of OSV.dev advisories for 31 widely used packages; add `--online` to query the full [OSV.dev](https://osv.dev) database.
 4. **AI Agent & Model Context Protocol (MCP) Guard:** Modern AI developer workflows rely on MCP servers (`mcp.json`) and LLM tools. AuthWarden audits tool declarations for unsandboxed shell execution and root filesystem mounts.
 5. **Coverage Transparency (No False Pass):** Unlike legacy tools that report "Pass" on languages they don't assess, AuthWarden explicitly reports active vs limited coverage for every language detected in your repository.
 6. **Fast & Zero Dependencies:** Pure JavaScript with no `npm` dependencies. Scanning this repository (about 50 files) takes roughly 30 ms on a laptop; expect time to grow linearly with file count.
@@ -168,9 +168,9 @@ Audits `openapi.yaml`, `swagger.json`, and Postman collections for:
 - Insecure cleartext transport (`http://`) in production server URLs.
 
 ### 6. 📦 SCA & Known CVE Scanner with Reachability Analysis
-Audits `package.json`, `package-lock.json`, `requirements.txt`, `go.mod`, `composer.json`, `.csproj`, `packages.lock.json`, and `pom.xml` for high-severity CVEs across modern ecosystems (npm, PyPI, Go, Composer, NuGet, and Maven). An import-level reachability check marks which vulnerable packages are actually imported in your source.
+Audits `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `requirements.txt`, `poetry.lock`, `go.mod`, `composer.json`, `.csproj`, `packages.lock.json`, and `pom.xml` for known CVEs across modern ecosystems (npm, PyPI, Go, Composer, NuGet, and Maven). An import-level reachability check marks which vulnerable packages are actually imported in your source.
 
-By default this uses a small curated offline list. Pass `--online` to look up every pinned dependency version in the [OSV.dev](https://osv.dev) database. Online mode sends only the ecosystem, package name and version of each dependency, never file paths or source code. If the lookup fails, the scan continues with the offline list and says so.
+By default this uses an offline snapshot (`src/data/cve-db.json`): every OSV.dev advisory for 31 widely used packages, with the real affected version ranges, so a version is only reported when it falls inside a vulnerable range. The snapshot is regenerated with `npm run update-cve-db`. A package outside those 31 is not covered offline. Pass `--online` to look up every pinned dependency version in the [OSV.dev](https://osv.dev) database. Online mode sends only the ecosystem, package name and version of each dependency, never file paths or source code. If the lookup fails, the scan continues with the offline list and says so.
 
 ### 7. 🤖 AI Agent & MCP Config Guard
 Audits Claude Desktop, Cursor, and custom AI agent tool manifests (`mcp.json`) for unsandboxed shell execution (`bash`, `powershell`), root filesystem access (`/`) and hardcoded secrets. Also flags tool poisoning: hidden, model-directed instructions inside MCP tool descriptions (`MCP-005`).
@@ -179,7 +179,7 @@ Audits Claude Desktop, Cursor, and custom AI agent tool manifests (`mcp.json`) f
 Audits `Dockerfile`, `docker-compose.yml`, `*.tf`, and Kubernetes manifests for root execution, sensitive port exposure (`3306`, `5432`, `6379`), and `/var/run/docker.sock` escapes. This is a small set of high-signal checks, not a replacement for a dedicated IaC scanner such as Trivy or Checkov.
 
 ### 9. 🗺️ Route Inventory
-`authwarden routes .` prints every endpoint AuthWarden discovered (Next.js, Express, FastAPI, ASP.NET Core, Spring), whether auth was detected, and why:
+`authwarden routes .` prints every endpoint AuthWarden discovered (Next.js, Express, Fastify, FastAPI, ASP.NET Core, Spring), whether auth was detected, and why:
 
 ```text
   UNPROTECTED POST   /billing/export
@@ -323,6 +323,20 @@ You can create an optional `.authwardenrc.json` in your repository root to confi
 ### 6. 🎚️ Confidence Levels
 
 Every finding carries a `confidence` (`HIGH`, `MEDIUM`, `LOW`) and a CWE id, shown in the terminal, JSON and SARIF (`precision`) output. `HIGH` means an exact pattern or configuration value; `LOW` means a naming or proximity heuristic that needs review. Run `authwarden rules` to see the level for each rule.
+
+---
+
+## 🧪 How Accurate Is It?
+
+AuthWarden matches patterns; it does not parse or type-check your code. To keep that honest, the repository ships a labelled corpus (`test/benchmark/corpus.mjs`): 70 small cases, each marked vulnerable or safe for one rule.
+
+```bash
+npm run bench
+```
+
+The current result is 35 of 35 vulnerable cases detected and 1 false positive in 35 safe cases (an object lookup on public data, which cannot be told apart statically). These cases are written by the maintainers and the scanner is tuned against them, so read the numbers as a regression guard, not as real-world precision or recall. `npm test` fails if any case changes outcome.
+
+As a check on code we did not write, the route inventory was compared with a manual read of [OWASP NodeGoat](https://github.com/OWASP/NodeGoat): all 20 routes were found, 12 protected and 8 public, matching the source. Expect misses on frameworks and auth conventions outside the supported list; `authwarden routes` shows the evidence for each decision so you can spot them.
 
 ---
 

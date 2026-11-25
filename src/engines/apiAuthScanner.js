@@ -1,5 +1,5 @@
 import { readText, getLines, getCodeLines, isTestPath } from '../utils/fileContext.js';
-import { findNextMiddlewareGuard } from './authContext.js';
+import { findNextMiddlewareGuard, UPSTREAM_AUTH_MIDDLEWARE } from './authContext.js';
 
 /**
  * API & Authorization Scanner
@@ -30,6 +30,8 @@ const AUTH_MIDDLEWARE_SIGNALS = [
   /protect/i,
   /checkrole/i,
   /requirelogin/i,
+  /logged_?in/i,
+  /login_?required/i,
   /current_user/i,
   /get_current_user/i,
   /depends\(.*auth/i,
@@ -46,9 +48,6 @@ const RATE_LIMIT_SIGNALS = [
   /bottleneck/i
 ];
 
-// Stricter than AUTH_MIDDLEWARE_SIGNALS: used for app.use()/router.use() guards, where
-// generic words such as "session" (express-session) or "token" must not count as auth.
-const UPSTREAM_AUTH_MIDDLEWARE = /\b(?:require|ensure|verify|check|validate|is)_?(?:auth\w*|login|logged\w*|user|admin|token|jwt|session|role\w*|signed\w*)\b|\bauthenticate\w*\b|\bauth(?:Middleware|Guard|Required|orize\w*|enticated)?\b|\bprotect(?:ed)?\b|\bjwt(?:Check|Auth|Middleware)\b|\bexpressjwt\b|\bclerkMiddleware\b|\brequiresAuth\b|passport\.authenticate/i;
 
 const PY_AUTH_DEPENDENCY = /auth|current_user|verify|token|jwt|require|permission|api_key|security|guard|admin/i;
 
@@ -56,9 +55,32 @@ function lineOf(content, index) {
   return content.slice(0, index).split('\n').length;
 }
 
+/** True when position `index` sits inside a string literal that opened earlier on the same line. */
+function insideStringLiteral(content, index) {
+  const lineStart = content.lastIndexOf('\n', index - 1) + 1;
+  let quote = null;
+  for (let i = lineStart; i < index; i++) {
+    const ch = content[i];
+    if (ch === '\\') { i++; continue; }
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+    }
+  }
+  return quote !== null;
+}
+
 /** router.use(auth) / app.use('/prefix', auth) guards declared in an Express file. */
 function collectExpressGuards(content) {
   const guards = [];
+  const hook = /\bfastify\.addHook\s*\(\s*['"](?:onRequest|preHandler|preValidation)['"]\s*,\s*([^;\n]*)/g;
+  let h;
+  while ((h = hook.exec(content)) !== null) {
+    if (UPSTREAM_AUTH_MIDDLEWARE.test(h[1])) {
+      guards.push({ receiver: 'fastify', prefix: null, index: h.index, line: lineOf(content, h.index), label: 'fastify.addHook(auth)' });
+    }
+  }
   const re = /\b(router|app)\.use\s*\(\s*(?:(['"`])([^'"`]+)\2\s*,\s*)?([^;\n]*)/g;
   let m;
   while ((m = re.exec(content)) !== null) {
@@ -68,6 +90,48 @@ function collectExpressGuards(content) {
     guards.push({ receiver: m[1], prefix: m[3] || null, index: m.index, line: lineOf(content, m.index) });
   }
   return guards;
+}
+
+// Explicit identity / rejection checks inside an inline route handler body
+const HANDLER_AUTH_CHECK = /\breq(?:uest)?\.(?:user|session|auth|isAuthenticated)\b|\bisAdmin\b|getServerSession|\bjwt\.verify\b|verifyToken|(?:sendStatus|status|code)\(\s*40[13]\s*\)/;
+
+/** Body of the inline handler (arrow or function expression) that starts at or after `from`. */
+function inlineHandlerBody(content, from) {
+  const window = content.slice(from, from + 4000);
+  const fn = window.search(/=>|\bfunction\b/);
+  if (fn === -1) return '';
+  const open = window.indexOf('{', fn);
+  if (open === -1) return '';
+  let depth = 0;
+  for (let i = open; i < window.length; i++) {
+    if (window[i] === '{') depth++;
+    else if (window[i] === '}' && --depth === 0) return window.slice(open, i + 1);
+  }
+  return window.slice(open);
+}
+
+/** Splits a call's argument text on top-level commas (ignores commas in strings and nested brackets). */
+function splitTopLevel(args) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let current = '';
+  for (let i = 0; i < args.length; i++) {
+    const ch = args[i];
+    if (quote) {
+      current += ch;
+      if (ch === '\\') { current += args[++i] ?? ''; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; current += ch; continue; }
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    if (ch === ',' && depth === 0) { parts.push(current.trim()); current = ''; continue; }
+    current += ch;
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
 }
 
 /** Text between the parenthesis at openIdx and its matching close. */
@@ -200,33 +264,50 @@ export function scanApiAuth(file, ctx = {}) {
     }
   }
 
+  // Comment-stripped source with identical line numbering
+  const expressCode = getCodeLines(file).join('\n');
+
   // 3. Express Route Patterns: (router|app).(get|post|put|delete)('/path', ...)
-  if (/\b(router|app)\.(get|post|put|delete|patch)\s*\(/i.test(content)) {
-    const expressGuards = collectExpressGuards(content);
-    const expressRegex = /\b(router|app)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*([^)]+)\)/g;
+  if (/\b(router|app|fastify)\.(get|post|put|delete|patch)\s*\(/i.test(expressCode)) {
+    const expressGuards = collectExpressGuards(expressCode);
+    const mountGuard = project?.expressMountGuards?.get(relPath) || null;
+    const expressRegex = /\b(router|app|fastify)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*([^)]+)\)/g;
     let expMatch;
-    while ((expMatch = expressRegex.exec(content)) !== null) {
+    while ((expMatch = expressRegex.exec(expressCode)) !== null) {
+      if (insideStringLiteral(expressCode, expMatch.index)) continue; // documentation or example text
       const method = expMatch[2].toUpperCase();
       const routePath = expMatch[3];
       const middlewareChain = expMatch[4];
-      const lineNo = content.slice(0, expMatch.index).split('\n').length;
+      const lineNo = expressCode.slice(0, expMatch.index).split('\n').length;
 
       const isAdmin = ADMIN_ROUTE_PATTERNS.some(p => p.test(routePath));
       const receiver = expMatch[1];
-      const inChain = AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(middlewareChain));
+      // Arguments are (path, ...middleware, handler): only the middle ones can be auth middleware.
+      // The handler counts only when it is a wrapper call such as requireAuth(handler).
+      const callArgs = splitTopLevel(balancedArgs(expressCode, expMatch.index + expMatch[0].indexOf('(')));
+      const middlewares = callArgs.slice(1, -1);
+      const handlerArg = callArgs.length > 1 ? callArgs[callArgs.length - 1] : '';
+      const wrappedHandler = !/=>|\bfunction\b/.test(handlerArg) && /^[\w$.]+\s*\(/.test(handlerArg) && UPSTREAM_AUTH_MIDDLEWARE.test(handlerArg);
+      const inChain = wrappedHandler || middlewares.some(arg => AUTH_MIDDLEWARE_SIGNALS.some(s => s.test(arg)));
       const guard = inChain ? null : expressGuards.find(g =>
         g.receiver === receiver && g.index < expMatch.index &&
         (!g.prefix || routePath === g.prefix || routePath.startsWith(g.prefix.replace(/\/$/, '') + '/')));
-      const hasAuth = inChain || Boolean(guard);
+      // The route match stops at the first ")", so look just past it for an inline handler
+      const routeHead = expressCode.slice(expMatch.index, expMatch.index + expMatch[0].length + 30);
+      const inBody = !inChain && !guard && /=>|\bfunction\b/.test(routeHead) &&
+        HANDLER_AUTH_CHECK.test(inlineHandlerBody(expressCode, expMatch.index));
+      const hasAuth = inChain || Boolean(guard) || inBody || Boolean(mountGuard);
       recordRoute({
-        method, path: routePath, line: lineNo, framework: 'Express',
+        method, path: routePath, line: lineNo, framework: receiver === 'fastify' ? 'Fastify' : 'Express',
         auth: hasAuth ? 'protected' : 'unprotected',
         evidence: inChain ? 'auth middleware in route chain'
-          : guard ? `${guard.receiver}.use(${guard.prefix ? `'${guard.prefix}', ` : ''}auth) at line ${guard.line}`
+          : guard ? `${guard.label || `${guard.receiver}.use(${guard.prefix ? `'${guard.prefix}', ` : ''}auth)`} at line ${guard.line}`
+          : inBody ? 'auth check in handler body'
+          : mountGuard ? mountGuard
           : 'no auth middleware found'
       });
       const isLoginOrAuth = /(?:^|\/)(?:auth\/)?(?:login|signin|token|authenticate|password\/reset)(?:\/|$)/i.test(routePath) && !/crawl|operator|live-login/i.test(routePath);
-      const hasRateLimit = RATE_LIMIT_SIGNALS.some(s => s.test(middlewareChain) || s.test(content));
+      const hasRateLimit = RATE_LIMIT_SIGNALS.some(s => s.test(middlewareChain) || s.test(expressCode));
 
       if (isAdmin && !hasAuth) {
         findings.push({
@@ -584,9 +665,11 @@ export function scanApiAuth(file, ctx = {}) {
     if (!line.trim()) continue;
 
     // Pattern: findById(req.params.id) / EF Core FindAsync(id) / Spring Data findById without owner check
-    if (/(?:findById|findByPk)\s*\([^)]*?(?:id|req\.params|\$id)|\.FindAsync\s*\(\s*(?:id|orderId|userId|accountId|itemId)\b|\.FirstOrDefault(?:Async)?\s*\(\s*[a-zA-Z0-9_]+\s*=>\s*[a-zA-Z0-9_]+\.Id\s*==\s*id\b|filter_by\(id=|\.filter\([a-zA-Z_]+\.id\s*==\s*id/i.test(line)) {
+    if (/(?:findById|findByPk)\s*\([^)]*?(?:id|req\.params|\$id)|\.find(?:Unique|First)(?:OrThrow)?\s*\(\s*\{\s*where\s*:\s*\{\s*id\b|\.FindAsync\s*\(\s*(?:id|orderId|userId|accountId|itemId)\b|\.FirstOrDefault(?:Async)?\s*\(\s*[a-zA-Z0-9_]+\s*=>\s*[a-zA-Z0-9_]+\.Id\s*==\s*id\b|filter_by\(id=|\.filter\([a-zA-Z_]+\.id\s*==\s*id/i.test(line)) {
       const contextBlock = lines.slice(Math.max(0, i - 10), Math.min(lines.length, i + 15)).join('\n');
-      const hasOwnerCheck = /user_id|userId|tenant_id|tenantId|owner_id|ownerId|org_id|accountId|req\.user|current_user|User\.FindFirst|ClaimsPrincipal|User\.Identity/i.test(contextBlock);
+      // Lookup keyed by the caller's own identity is not an object reference from the client
+      const keyedByCaller = /\(\s*(?:req\.user|request\.user|loggedInUser|currentUser|authenticatedUser|authUser|session\.user)\b[\w.?]*\s*\)/.test(line);
+      const hasOwnerCheck = keyedByCaller || /user_id|userId|tenant_id|tenantId|owner_id|ownerId|org_id|accountId|req\.user|current_user|User\.FindFirst|ClaimsPrincipal|User\.Identity/i.test(contextBlock);
 
       if (!hasOwnerCheck &&
           !/^\s*['"`]/.test(line) &&

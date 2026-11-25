@@ -251,7 +251,7 @@ function printRoutes(scanResult, options) {
   console.log(colors.bold(`Route inventory: ${summary.total} route(s), ${summary.protected} protected, ${summary.unprotected} without detected auth`));
   console.log(colors.gray('─'.repeat(72)));
   if (routes.length === 0) {
-    console.log(colors.gray('  No routes discovered (supported: Next.js, Express, FastAPI, ASP.NET Core, Spring).'));
+    console.log(colors.gray('  No routes discovered (supported: Next.js, Express, Fastify, FastAPI, ASP.NET Core, Spring).'));
   }
   const sorted = [...routes].sort((a, b) => (a.auth === b.auth ? a.path.localeCompare(b.path) : a.auth === 'unprotected' ? -1 : 1));
   for (const r of sorted) {

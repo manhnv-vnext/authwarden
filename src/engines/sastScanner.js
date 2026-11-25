@@ -230,6 +230,12 @@ export function scanSAST(file) {
         continue;
       }
 
+      // Outbound call to a configured or constant URL with no request input on the line
+      if (rule.id === 'SAST-004' && !/\breq\.|\brequest\.|\$_(?:GET|POST|REQUEST)/.test(line) &&
+          /\(\s*(?:await\s+)?(?:(?:config|settings|constants?|env|process\.env)\.[\w.]+|[A-Z][A-Z0-9_]{2,})\s*[,)]/.test(line)) {
+        continue;
+      }
+
       if (rule.regex.test(line)) {
         findings.push({
           ruleId: rule.id,
@@ -274,6 +280,10 @@ export function scanSAST(file) {
         if (i <= assignedLine) continue;
 
         for (const sinkRule of TAINT_SINKS) {
+          // SQL text is a plain string literal and the variable is a bound parameter: not injectable
+          if (sinkRule.id === 'TAINT-002' && /\.(?:query|execute|raw)\s*\(\s*(['"])(?:(?!\1)[^\\])*\1\s*,/.test(lineText)) {
+            continue;
+          }
           if (sinkRule.sinkRegex(escapeRegex(variable)).test(lineText)) {
             findings.push({
               ruleId: sinkRule.id,

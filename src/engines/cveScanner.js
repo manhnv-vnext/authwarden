@@ -1,355 +1,124 @@
 import fs from 'fs';
 import { readText } from '../utils/fileContext.js';
+import { extractDependencies } from './dependencies.js';
 
 /**
  * Software Composition Analysis (SCA) & CVE Vulnerability Scanner
- * Detects known CVEs across npm, PyPI, Go, and Composer dependencies.
- * Includes reachability analysis and optional live OSV database querying.
+ * Matches manifest and lockfile dependencies against an offline OSV.dev snapshot
+ * (src/data/cve-db.json) and tags whether the package is imported in source.
  */
 
-export const CURATED_CVE_DB = [
-  // ─── NPM (Node.js) ────────────────────────────────────────────────────────
-  {
-    ecosystem: 'npm',
-    package: 'lodash',
-    affectedVersion: '< 4.17.21',
-    fixedVersion: '4.17.21',
-    cve: 'CVE-2020-8203',
-    severity: 'CRITICAL',
-    title: 'Prototype Pollution in lodash',
-    description: 'Versions prior to 4.17.21 are vulnerable to Prototype Pollution via zipObjectDeep and set.',
-    remediation: 'Upgrade lodash to version 4.17.21 or higher.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'axios',
-    affectedVersion: '< 1.7.4',
-    fixedVersion: '1.7.4',
-    cve: 'CVE-2023-45857',
-    severity: 'HIGH',
-    title: 'SSRF & Credential Leakage in axios',
-    description: 'Axios mishandles cross-origin redirects, leaking Authorization headers and credentials.',
-    remediation: 'Upgrade axios to version 1.7.4 or later.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'jsonwebtoken',
-    affectedVersion: '< 9.0.0',
-    fixedVersion: '9.0.0',
-    cve: 'CVE-2022-23529',
-    severity: 'HIGH',
-    title: 'Arbitrary Code Execution / Insecure Verification in jsonwebtoken',
-    description: 'Vulnerability allows attackers to craft arbitrary verification objects to bypass signature checks.',
-    remediation: 'Upgrade jsonwebtoken to version 9.0.0 or higher.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'express',
-    affectedVersion: '< 4.19.2',
-    fixedVersion: '4.19.2',
-    cve: 'CVE-2024-29041',
-    severity: 'MEDIUM',
-    title: 'Open Redirect in express URL encoding',
-    description: 'Express prior to 4.19.2 mishandles URL encoding leading to open redirection vulnerability.',
-    remediation: 'Upgrade express to 4.19.2 or later.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'next',
-    affectedVersion: '< 14.1.1',
-    fixedVersion: '14.1.1',
-    cve: 'CVE-2024-34351',
-    severity: 'HIGH',
-    title: 'Server-Side Request Forgery (SSRF) in Next.js Server Actions',
-    description: 'Next.js App Router mishandles Host headers during Server Action redirects, leading to SSRF.',
-    remediation: 'Upgrade next to 14.1.1 or later.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'ip',
-    affectedVersion: '< 2.0.1',
-    fixedVersion: '2.0.1',
-    cve: 'CVE-2024-29415',
-    severity: 'HIGH',
-    title: 'SSRF Protection Bypass in ip package',
-    description: 'The ip package incorrectly identifies certain octal IP representations as public addresses.',
-    remediation: 'Upgrade ip to 2.0.1 or higher.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'ws',
-    affectedVersion: '< 8.17.1',
-    fixedVersion: '8.17.1',
-    cve: 'CVE-2024-37890',
-    severity: 'HIGH',
-    title: 'Denial of Service in ws WebSocket library',
-    description: 'A malicious server can send an excessive number of redirects causing process crashes.',
-    remediation: 'Upgrade ws to 8.17.1 or higher.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'semver',
-    affectedVersion: '< 7.5.2',
-    fixedVersion: '7.5.2',
-    cve: 'CVE-2022-25883',
-    severity: 'MEDIUM',
-    title: 'Regular Expression Denial of Service (ReDoS) in semver',
-    description: 'Vulnerable to ReDoS when parsing crafted version range strings.',
-    remediation: 'Upgrade semver to version 7.5.2 or later.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'tar',
-    affectedVersion: '< 6.1.9',
-    fixedVersion: '6.1.9',
-    cve: 'CVE-2021-37712',
-    severity: 'HIGH',
-    title: 'Arbitrary File Overwrite / Directory Traversal in node-tar',
-    description: 'Crafted archive can overwrite files outside target directory during extraction.',
-    remediation: 'Upgrade tar to 6.1.9 or higher.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'undici',
-    affectedVersion: '< 5.28.4',
-    fixedVersion: '5.28.4',
-    cve: 'CVE-2024-30260',
-    severity: 'HIGH',
-    title: 'Proxy-Authorization Header Leak in undici',
-    description: 'Undici leaks Proxy-Authorization headers when handling cross-origin HTTP redirects.',
-    remediation: 'Upgrade undici to >= 5.28.4 or >= 6.11.1.'
-  },
-  {
-    ecosystem: 'npm',
-    package: 'crypto-js',
-    affectedVersion: '< 4.2.0',
-    fixedVersion: '4.2.0',
-    cve: 'CVE-2023-46233',
-    severity: 'MEDIUM',
-    title: 'Insecure PBKDF2 Iteration Count in crypto-js',
-    description: 'Default PBKDF2 iteration count was insufficient, allowing faster credential cracking.',
-    remediation: 'Upgrade crypto-js to 4.2.0 or higher.'
-  },
-
-  // ─── PyPI (Python) ────────────────────────────────────────────────────────
-  {
-    ecosystem: 'pypi',
-    package: 'pyyaml',
-    affectedVersion: '< 5.4',
-    fixedVersion: '5.4',
-    cve: 'CVE-2020-14343',
-    severity: 'CRITICAL',
-    title: 'Arbitrary Code Execution in PyYAML',
-    description: 'Unsafe YAML loader in PyYAML allows arbitrary code execution via crafted YAML payload.',
-    remediation: 'Upgrade PyYAML to >= 5.4 and use yaml.safe_load().'
-  },
-  {
-    ecosystem: 'pypi',
-    package: 'django',
-    affectedVersion: '< 4.2.11',
-    fixedVersion: '4.2.11',
-    cve: 'CVE-2024-27351',
-    severity: 'HIGH',
-    title: 'Regular Expression Denial of Service (ReDoS) in Django',
-    description: 'Django before 4.2.11 contains ReDoS vulnerability in the Truncator class.',
-    remediation: 'Upgrade django to >= 4.2.11 or >= 5.0.3.'
-  },
-  {
-    ecosystem: 'pypi',
-    package: 'requests',
-    affectedVersion: '< 2.31.0',
-    fixedVersion: '2.31.0',
-    cve: 'CVE-2023-32681',
-    severity: 'MEDIUM',
-    title: 'Proxy-Authorization Header Leak in requests',
-    description: 'Requests leaks Proxy-Authorization headers to destination servers when following redirects.',
-    remediation: 'Upgrade requests to 2.31.0 or higher.'
-  },
-  {
-    ecosystem: 'pypi',
-    package: 'jinja2',
-    affectedVersion: '< 3.1.3',
-    fixedVersion: '3.1.3',
-    cve: 'CVE-2024-22195',
-    severity: 'HIGH',
-    title: 'Cross-Site Scripting (XSS) in Jinja2 xmlattr filter',
-    description: 'The xmlattr filter in Jinja2 before 3.1.3 does not sanitize keys, allowing attribute injection.',
-    remediation: 'Upgrade jinja2 to version 3.1.3 or higher.'
-  },
-  {
-    ecosystem: 'pypi',
-    package: 'urllib3',
-    affectedVersion: '< 2.0.7',
-    fixedVersion: '2.0.7',
-    cve: 'CVE-2023-45803',
-    severity: 'MEDIUM',
-    title: 'Proxy-Authorization Header Leak in urllib3',
-    description: 'Urllib3 leaks Proxy-Authorization headers to destination origin when redirected.',
-    remediation: 'Upgrade urllib3 to 2.0.7 or later.'
-  },
-  {
-    ecosystem: 'pypi',
-    package: 'flask',
-    affectedVersion: '< 2.2.5',
-    fixedVersion: '2.2.5',
-    cve: 'CVE-2023-30861',
-    severity: 'HIGH',
-    title: 'Cookie Disclosure / Session Caching in Flask',
-    description: 'Flask applications using default caching may leak session cookies across users.',
-    remediation: 'Upgrade Flask to version 2.2.5 or higher.'
-  },
-
-  // ─── Go (go.mod) ──────────────────────────────────────────────────────────
-  {
-    ecosystem: 'go',
-    package: 'golang.org/x/net',
-    affectedVersion: '< 0.23.0',
-    fixedVersion: '0.23.0',
-    cve: 'CVE-2023-45288',
-    severity: 'HIGH',
-    title: 'HTTP/2 CONTINUATION Flood Denial of Service in Go',
-    description: 'Unbounded memory allocation during HTTP/2 CONTINUATION frame processing leads to node crashes.',
-    remediation: 'Upgrade golang.org/x/net to >= 0.23.0.'
-  },
-
-  // ─── PHP (composer.json) ──────────────────────────────────────────────────
-  {
-    ecosystem: 'composer',
-    package: 'guzzlehttp/guzzle',
-    affectedVersion: '< 7.4.5',
-    fixedVersion: '7.4.5',
-    cve: 'CVE-2022-31090',
-    severity: 'HIGH',
-    title: 'Authorization Header Disclosure in Guzzle',
-    description: 'Guzzle leaks Authorization headers when following cross-domain redirects.',
-    remediation: 'Upgrade guzzlehttp/guzzle to version 7.4.5 or higher.'
-  },
-  {
-    ecosystem: 'composer',
-    package: 'ec-cube/ec-cube',
-    affectedVersion: '< 4.2.3',
-    fixedVersion: '4.2.3',
-    cve: 'CVE-2023-38500',
-    severity: 'CRITICAL',
-    title: 'Remote Code Execution / SQLi in EC-CUBE',
-    description: 'EC-CUBE versions prior to 4.2.3 contain vulnerabilities actively exploited for payment skimming.',
-    remediation: 'Apply vendor security patch or upgrade EC-CUBE to >= 4.2.3 immediately.'
-  },
-  {
-    ecosystem: 'composer',
-    package: 'laravel/framework',
-    affectedVersion: '< 8.75.0',
-    fixedVersion: '8.75.0',
-    cve: 'CVE-2021-43617',
-    severity: 'HIGH',
-    title: 'Unintended Attribute Binding in Laravel Form Requests',
-    description: 'Laravel versions prior to 8.75.0 mishandle mass assignment via FormRequest validation.',
-    remediation: 'Upgrade laravel/framework to >= 8.75.0 or 9.x.'
-  },
-
-  // ─── NuGet (.NET / C#) ──────────────────────────────────────────────────
-  {
-    ecosystem: 'nuget',
-    package: 'Newtonsoft.Json',
-    affectedVersion: '< 13.0.1',
-    fixedVersion: '13.0.1',
-    cve: 'CVE-2024-21907',
-    severity: 'HIGH',
-    title: 'Denial of Service (Stack Overflow) in Newtonsoft.Json',
-    description: 'Newtonsoft.Json prior to 13.0.1 is vulnerable to DoS via deeply nested JSON data causing a StackOverflowException during deserialization.',
-    remediation: 'Upgrade Newtonsoft.Json to version 13.0.1 or higher.'
-  },
-  {
-    ecosystem: 'nuget',
-    package: 'RestSharp',
-    affectedVersion: '< 106.12.0',
-    fixedVersion: '106.12.0',
-    cve: 'CVE-2021-27293',
-    severity: 'HIGH',
-    title: 'Path Traversal / Insecure File Download in RestSharp',
-    description: 'RestSharp versions prior to 106.12.0 do not sanitize filename when using DownloadFileAsync, leading to path traversal.',
-    remediation: 'Upgrade RestSharp to version 106.12.0 or higher.'
-  },
-  {
-    ecosystem: 'nuget',
-    package: 'System.Text.Json',
-    affectedVersion: '< 8.0.5',
-    fixedVersion: '8.0.5',
-    cve: 'CVE-2024-43485',
-    severity: 'HIGH',
-    title: 'Denial of Service in System.Text.Json',
-    description: 'System.Text.Json contains a denial of service vulnerability when decoding deeply nested JSON payloads.',
-    remediation: 'Upgrade System.Text.Json to 8.0.5 or later (or 6.0.10 for .NET 6).'
-  },
-  {
-    ecosystem: 'nuget',
-    package: 'Microsoft.Data.SqlClient',
-    affectedVersion: '< 5.1.4',
-    fixedVersion: '5.1.4',
-    cve: 'CVE-2024-0056',
-    severity: 'HIGH',
-    title: 'Security Feature Bypass in Microsoft.Data.SqlClient',
-    description: 'Vulnerability allows an attacker to bypass TLS certificate validation and perform Man-in-the-Middle attacks.',
-    remediation: 'Upgrade Microsoft.Data.SqlClient to >= 5.1.4.'
-  },
-  {
-    ecosystem: 'nuget',
-    package: 'Microsoft.AspNetCore.Authentication.JwtBearer',
-    affectedVersion: '< 8.0.7',
-    fixedVersion: '8.0.7',
-    cve: 'CVE-2024-38095',
-    severity: 'HIGH',
-    title: 'Denial of Service in ASP.NET Core JwtBearer (Microsoft.IdentityModel)',
-    description: 'Malformed tokens with crafted key identifier or signature cause CPU exhaustion and denial of service.',
-    remediation: 'Upgrade Microsoft.AspNetCore.Authentication.JwtBearer to 8.0.7 or later (or 9.0+).'
-  },
-  {
-    ecosystem: 'nuget',
-    package: 'AWSSDK.Core',
-    affectedVersion: '< 3.7.0.25',
-    fixedVersion: '3.7.0.25',
-    cve: 'CVE-2022-31159',
-    severity: 'HIGH',
-    title: 'Arbitrary File Overwrite / Directory Traversal in AWSSDK.Core',
-    description: 'AWSSDK.Core allows arbitrary file writes on extraction when handling crafted S3 object keys.',
-    remediation: 'Upgrade AWSSDK.Core and AWSSDK.S3 to >= 3.7.0.25.'
-  },
-
-  // ─── Maven (Java / Spring Boot) ──────────────────────────────────────────
-  {
-    ecosystem: 'maven',
-    package: 'log4j-core',
-    affectedVersion: '< 2.17.1',
-    fixedVersion: '2.17.1',
-    cve: 'CVE-2021-44228',
-    severity: 'CRITICAL',
-    title: 'Log4Shell: Remote Code Execution in Apache Log4j',
-    description: 'JNDI features used in configuration and message lookup allow arbitrary remote code execution via LDAP/RMI.',
-    remediation: 'Upgrade org.apache.logging.log4j:log4j-core to 2.17.1 or higher.'
-  },
-  {
-    ecosystem: 'maven',
-    package: 'spring-beans',
-    affectedVersion: '< 5.3.18',
-    fixedVersion: '5.3.18',
-    cve: 'CVE-2022-22965',
-    severity: 'CRITICAL',
-    title: 'Spring4Shell: Remote Code Execution in Spring Framework',
-    description: 'Spring MVC / WebFlux on JDK 9+ allows RCE via data binding to classLoader properties.',
-    remediation: 'Upgrade org.springframework:spring-beans and spring-webmvc to >= 5.3.18 or >= 5.2.20.'
-  },
-  {
-    ecosystem: 'maven',
-    package: 'jackson-databind',
-    affectedVersion: '< 2.13.4',
-    fixedVersion: '2.13.4',
-    cve: 'CVE-2022-42003',
-    severity: 'HIGH',
-    title: 'Denial of Service / Polymorphic Deserialization in Jackson-databind',
-    description: 'Deeply nested arrays or crafted polymorphic gadgets in jackson-databind trigger resource exhaustion or RCE.',
-    remediation: 'Upgrade com.fasterxml.jackson.core:jackson-databind to 2.13.4 or higher.'
+/**
+ * Offline vulnerability snapshot, generated from OSV.dev by scripts/update-cve-db.mjs.
+ * Each entry carries the advisory's real affected ranges for one package.
+ */
+function loadDatabase() {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../data/cve-db.json', import.meta.url), 'utf8'));
+  } catch {
+    return { source: 'https://osv.dev', generatedAt: null, entries: [] };
   }
-];
+}
+
+const DATABASE = loadDatabase();
+export const CURATED_CVE_DB = DATABASE.entries;
+export const CVE_DB_META = { source: DATABASE.source, generatedAt: DATABASE.generatedAt, advisories: DATABASE.entries.length };
+
+const DB_INDEX = new Map();
+for (const entry of CURATED_CVE_DB) {
+  const key = entry.ecosystem + '|' + entry.package.toLowerCase();
+  if (!DB_INDEX.has(key)) DB_INDEX.set(key, []);
+  DB_INDEX.get(key).push(entry);
+}
+
+const RELEASE_QUALIFIERS = new Set(['release', 'final', 'ga']);
+
+function versionTokens(version) {
+  return String(version).trim().replace(/^v/i, '').split('+')[0].split(/[.\-_]/)
+    .filter(t => t !== '' && !RELEASE_QUALIFIERS.has(t.toLowerCase()));
+}
+
+/** Negative when a < b, 0 when equal, positive when a > b. Pre-releases sort before their release. */
+export function compareVersions(a, b) {
+  const ta = versionTokens(a);
+  const tb = versionTokens(b);
+  for (let i = 0; i < Math.max(ta.length, tb.length); i++) {
+    const x = ta[i];
+    const y = tb[i];
+    if (x === y) continue;
+    const xn = x !== undefined && /^\d+$/.test(x);
+    const yn = y !== undefined && /^\d+$/.test(y);
+    if (x === undefined) return yn ? (Number(y) === 0 ? 0 : -1) : 1; // "2.0" == "2.0.0", "5.0.0" > "5.0.0-beta"
+    if (y === undefined) return xn ? (Number(x) === 0 ? 0 : 1) : -1;
+    if (xn && yn) {
+      if (Number(x) !== Number(y)) return Number(x) - Number(y);
+      continue;
+    }
+    if (xn) return 1; // numeric outranks a pre-release tag
+    if (yn) return -1;
+    return x.toLowerCase() < y.toLowerCase() ? -1 : 1;
+  }
+  return 0;
+}
+
+/** True when version falls inside any [introduced, fixed) or [introduced, lastAffected] range. */
+export function isVersionAffected(version, ranges = []) {
+  return ranges.some(r => {
+    if (r.introduced && r.introduced !== '0' && compareVersions(version, r.introduced) < 0) return false;
+    if (r.fixed !== undefined) return compareVersions(version, r.fixed) < 0;
+    if (r.lastAffected !== undefined) return compareVersions(version, r.lastAffected) <= 0;
+    return true;
+  });
+}
+
+/** Reduces a manifest specifier ("^4.17.15", ">=2.0, <3") to its lowest admissible version. */
+function baseVersion(spec) {
+  const text = String(spec || '');
+  if (!/\d/.test(text) || /^(?:git\+|https?:|file:|github:|workspace:|link:|npm:)/i.test(text)) return null;
+  const clean = text.replace(/[\^~>=<\[\]()]/g, '').trim().split(/\s+|\|\||,/)[0];
+  return /^v?\d/.test(clean) ? clean : null;
+}
+
+function describeRanges(ranges) {
+  return ranges.map(r => {
+    const from = r.introduced && r.introduced !== '0' ? `>= ${r.introduced}, ` : '';
+    if (r.fixed !== undefined) return `${from}< ${r.fixed}`;
+    if (r.lastAffected !== undefined) return `${from}<= ${r.lastAffected}`;
+    return `${from}all later versions`.replace(/^all later/, 'all');
+  }).join(' or ');
+}
+
+/**
+ * Every advisory in the offline snapshot affecting this package version.
+ * Returns objects shaped for findings: { cve, severity, title, description, affectedVersion, remediation }.
+ */
+export function findVulns(ecosystem, packageName, versionSpec) {
+  let name = String(packageName || '').toLowerCase();
+  if (ecosystem === 'pypi') name = name.replace(/[._]+/g, '-');
+  const candidates = DB_INDEX.get(ecosystem + '|' + name);
+  if (!candidates) return [];
+  const version = baseVersion(versionSpec);
+  if (!version) return [];
+
+  const hits = [];
+  for (const entry of candidates) {
+    const range = entry.ranges.find(r => isVersionAffected(version, [r]));
+    if (!range) continue;
+    hits.push({
+      cve: entry.cve,
+      advisory: entry.advisory,
+      severity: entry.severity,
+      title: entry.title,
+      description: entry.title.replace(/\.$/, '') + '.',
+      affectedVersion: describeRanges(entry.ranges),
+      fixedVersion: range.fixed || null,
+      remediation: range.fixed
+        ? `Upgrade ${entry.package} to ${range.fixed} or later.`
+        : `No fixed version is listed for this range; see https://osv.dev/vulnerability/${entry.advisory}.`
+    });
+  }
+  return hits;
+}
 
 export async function scanCVEs(file, allFiles = [], options = {}) {
   const findings = [];
@@ -366,11 +135,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
       const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
 
       for (const [depName, versionSpec] of Object.entries(allDeps)) {
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'npm' && item.package.toLowerCase() === depName.toLowerCase()
-        );
-
-        if (match && isVersionPotentiallyVulnerable(versionSpec, match.fixedVersion)) {
+        for (const match of findVulns('npm', depName.toLowerCase(), versionSpec)) {
           const isReachable = checkPackageReachable(depName, allFiles);
           const lineNo = findLineNumber(content, `"${depName}"`);
 
@@ -403,11 +168,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
         if (!depName || !version || scannedPkgs.has(depName + '@' + version)) return;
         scannedPkgs.add(depName + '@' + version);
 
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'npm' && item.package.toLowerCase() === depName.toLowerCase()
-        );
-
-        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+        for (const match of findVulns('npm', depName.toLowerCase(), version)) {
           const isReachable = checkPackageReachable(depName, allFiles);
           const lineNo = findLineNumber(content, `"${depName}"`);
 
@@ -444,6 +205,30 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
     }
   }
 
+  // 1c. yarn.lock / pnpm-lock.yaml / poetry.lock (resolved versions)
+  if (fileName === 'yarn.lock' || fileName === 'pnpm-lock.yaml' || fileName === 'poetry.lock') {
+    for (const dep of extractDependencies(file, allFiles)) {
+      const ecosystem = dep.ecosystem === 'PyPI' ? 'pypi' : 'npm';
+      const matches = findVulns(ecosystem, dep.name, dep.version);
+      if (matches.length === 0) continue;
+      const isReachable = ecosystem === 'npm' ? checkPackageReachable(dep.name, allFiles) : undefined;
+      for (const match of matches) {
+        findings.push({
+          ruleId: match.cve,
+          severity: match.severity,
+          title: `${match.title} (${dep.name} ${dep.version}) [lockfile]`,
+          file: relPath,
+          line: dep.line,
+          snippet: `${dep.name}@${dep.version}`,
+          ...(isReachable === undefined ? {} : { isReachable }),
+          description: `${match.description} (Affected: ${match.affectedVersion}).` +
+            (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Resolved dependency in lockfile)'),
+          remediation: `${match.remediation} (Resolved: ${dep.version})`
+        });
+      }
+    }
+  }
+
   // 2. Scan requirements.txt
   if (fileName === 'requirements.txt') {
     const lines = content.split('\n');
@@ -456,11 +241,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
         const pkgName = matchPart[1].toLowerCase();
         const version = matchPart[2].trim();
 
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'pypi' && item.package.toLowerCase() === pkgName
-        );
-
-        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+        for (const match of findVulns('pypi', pkgName, version)) {
           findings.push({
             ruleId: match.cve,
             severity: match.severity,
@@ -485,11 +266,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
         const modName = matchPart[1];
         const version = matchPart[2];
 
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'go' && item.package.toLowerCase() === modName.toLowerCase()
-        );
-
-        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+        for (const match of findVulns('go', modName.toLowerCase(), version)) {
           findings.push({
             ruleId: match.cve,
             severity: match.severity,
@@ -512,11 +289,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
       const reqs = { ...(comp.require || {}), ...(comp['require-dev'] || {}) };
 
       for (const [depName, versionSpec] of Object.entries(reqs)) {
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'composer' && item.package.toLowerCase() === depName.toLowerCase()
-        );
-
-        if (match && isVersionPotentiallyVulnerable(versionSpec, match.fixedVersion)) {
+        for (const match of findVulns('composer', depName.toLowerCase(), versionSpec)) {
           const lineNo = findLineNumber(content, `"${depName}"`);
           findings.push({
             ruleId: match.cve,
@@ -561,11 +334,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
       }
 
       if (pkgName && version) {
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'nuget' && item.package.toLowerCase() === pkgName.toLowerCase()
-        );
-
-        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+        for (const match of findVulns('nuget', pkgName.toLowerCase(), version)) {
           const isReachable = checkPackageReachable(pkgName, allFiles, 'nuget');
           findings.push({
             ruleId: match.cve,
@@ -594,11 +363,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
         if (!depName || !version || scannedNuget.has(depName + '@' + version)) return;
         scannedNuget.add(depName + '@' + version);
 
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'nuget' && item.package.toLowerCase() === depName.toLowerCase()
-        );
-
-        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+        for (const match of findVulns('nuget', depName.toLowerCase(), version)) {
           const isReachable = checkPackageReachable(depName, allFiles, 'nuget');
           const lineNo = findLineNumber(content, `"${depName}"`);
 
@@ -645,11 +410,7 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
         const artifactId = artMatch[1].trim();
         const version = verMatch[1].trim();
 
-        const match = CURATED_CVE_DB.find(
-          item => item.ecosystem === 'maven' && item.package.toLowerCase() === artifactId.toLowerCase()
-        );
-
-        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+        for (const match of findVulns('maven', artifactId.toLowerCase(), version)) {
           const isReachable = checkPackageReachable(artifactId, allFiles, 'maven');
           const lineNo = content.slice(0, depMatch.index).split('\n').length;
 
@@ -754,21 +515,6 @@ export function checkPackageReachable(pkgName, allFiles, ecosystem = 'npm') {
   const codes = getCandidateCodes(allFiles, ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue']);
   for (const code of codes) {
     if (importRegex.test(code)) return true;
-  }
-  return false;
-}
-
-function isVersionPotentiallyVulnerable(spec, fixed) {
-  if (!/\d/.test(spec) || /^(?:git\+|https?:|file:|github:)/i.test(spec)) return false;
-  const cleanSpec = spec.replace(/[\^~>=<\[\]()]/g, '').trim().split(/\s+|\|\||,/)[0];
-  const specParts = cleanSpec.split('.').map(n => parseInt(n, 10) || 0);
-  const fixedParts = fixed.split('.').map(n => parseInt(n, 10) || 0);
-
-  for (let i = 0; i < Math.max(specParts.length, fixedParts.length); i++) {
-    const s = specParts[i] || 0;
-    const f = fixedParts[i] || 0;
-    if (s < f) return true;
-    if (s > f) return false;
   }
   return false;
 }

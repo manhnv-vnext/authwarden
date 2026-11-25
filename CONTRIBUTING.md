@@ -41,12 +41,14 @@ Adding a new rule is straightforward:
 
 4. **Add a unit test in `test/`** to ensure your rule fires on vulnerable code and ignores safe patterns.
 
-5. **Run the test suite:**
+5. **Add a vulnerable and a safe case to `test/benchmark/corpus.mjs`** and check the result with `npm run bench`.
+
+6. **Run the test suite:**
    ```bash
    npm test
    ```
 
-6. **Submit a Pull Request** with a brief description and link to any relevant CVE or OWASP category!
+7. **Submit a Pull Request** with a brief description and link to any relevant CVE or OWASP category!
 
 ---
 

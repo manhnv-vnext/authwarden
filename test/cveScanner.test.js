@@ -31,7 +31,7 @@ test('detects CVE in package.json and checks reachability', async () => {
 
   const lodashVuln = findings.find(f => f.ruleId === 'CVE-2020-8203');
   assert.ok(lodashVuln);
-  assert.equal(lodashVuln.severity, 'CRITICAL');
+  assert.equal(lodashVuln.severity, 'HIGH');
   assert.equal(lodashVuln.isReachable, true);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -72,7 +72,7 @@ test('detects CVE in package-lock.json (resolved transitive dependencies)', asyn
     packages: {
       '': { name: 'test-app', version: '1.0.0' },
       'node_modules/axios': {
-        version: '1.6.0'
+        version: '1.5.1'
       }
     }
   };

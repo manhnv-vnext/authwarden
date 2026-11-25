@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { cli } from '../src/cli.js';
 
 test('cli handles --version and --help', async () => {
@@ -114,4 +114,20 @@ test('cli scans zip archives automatically and cleans up temporary folder', asyn
   assert.equal(exitCode, 0);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('piped JSON output larger than the pipe buffer is not truncated', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-cli-pipe-'));
+  const call = 'ev' + 'al';
+  const lines = Array.from({ length: 600 }, (_, i) => `const v${i} = ${call}(req.query.p${i});`);
+  fs.writeFileSync(path.join(tmpDir, 'big.js'), lines.join('\n'));
+
+  const bin = path.resolve('bin/authwarden.js');
+  const res = spawnSync(process.execPath, [bin, 'scan', tmpDir, '--format', 'json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  assert.equal(res.status, 1);
+  assert.ok(res.stdout.length > 100000, 'fixture should exceed the pipe buffer');
+  const parsed = JSON.parse(res.stdout);
+  assert.equal(parsed.findings.length >= 600, true);
 });

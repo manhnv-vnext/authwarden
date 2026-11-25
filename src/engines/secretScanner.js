@@ -152,6 +152,11 @@ export function scanSecrets(file, options = {}) {
         continue;
       }
 
+      // A connection string whose password is a template placeholder holds no secret
+      if (rule.type === 'db_uri' && /:\/\/[^:@\s]+:(?:\$\{|\$\(|\{\{|%s|<|\$[A-Za-z_])/.test(secretValue)) {
+        continue;
+      }
+
       const matchIndex = match.index;
       const lineNo = content.slice(0, matchIndex).split('\n').length;
       const lineText = lines[lineNo - 1] || '';
