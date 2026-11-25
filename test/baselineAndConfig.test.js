@@ -6,6 +6,7 @@ import os from 'os';
 import { loadConfig } from '../src/utils/config.js';
 import { generateFingerprint, saveBaseline, loadBaseline, applyBaseline } from '../src/utils/baseline.js';
 import { generateHtml } from '../src/reporters/htmlReporter.js';
+import { generateMarkdown } from '../src/reporters/sarifReporter.js';
 import { runScan } from '../src/index.js';
 
 test('loadConfig discovers .authwardenrc.json and reads direct config file', () => {
@@ -174,4 +175,33 @@ test('generateHtml creates self-contained interactive dashboard with escaping', 
   assert.ok(html.includes('class="filter-btn"'));
   assert.ok(html.includes('copyFix('));
   assert.ok(html.includes('const findings ='));
+});
+
+test('generateHtml and generateMarkdown include Coverage Transparency scorecard', () => {
+  const scanResult = {
+    targetDir: '/projects/sato-api',
+    stats: {
+      filesScanned: 15,
+      durationMs: 22,
+      frameworks: ['ASP.NET Core (.NET 9.0)', 'JwtBearer (Auth)'],
+      coverageScorecard: [
+        { target: 'C# (.NET / ASP.NET Core)', status: 'ACTIVE', detail: 'Auth, BOLA, File Upload, SAST & NuGet SCA' },
+        { target: 'Rust', status: 'LIMITED', detail: 'Secrets & IaC only (SAST in roadmap)' }
+      ]
+    },
+    findings: [],
+    verifiedMap: {}
+  };
+
+  const html = generateHtml(scanResult);
+  assert.ok(html.includes('Coverage Transparency'));
+  assert.ok(html.includes('ASP.NET Core (.NET 9.0)'));
+  assert.ok(html.includes('✔ ACTIVE'));
+  assert.ok(html.includes('▲ LIMITED'));
+
+  const md = generateMarkdown(scanResult);
+  assert.ok(md.includes('Coverage Transparency'));
+  assert.ok(md.includes('🟢 ACTIVE'));
+  assert.ok(md.includes('🟡 LIMITED'));
+  assert.ok(md.includes('ASP.NET Core (.NET 9.0)'));
 });

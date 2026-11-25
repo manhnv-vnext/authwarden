@@ -209,6 +209,27 @@ export function generateHtml(scanResult) {
     }
     .copy-btn:hover { background: rgba(5, 150, 105, 0.2); }
     .empty-state { text-align: center; padding: 48px; color: var(--text-muted); font-size: 16px; }
+    .coverage-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+    }
+    .coverage-title { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .coverage-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .coverage-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #080c14;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .cov-ACTIVE { color: #34d399; font-weight: 700; }
+    .cov-LIMITED { color: #fbbf24; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -250,6 +271,20 @@ export function generateHtml(scanResult) {
         <div class="stat-label">Low</div>
       </div>
     </div>
+
+    ${(stats.coverageScorecard && stats.coverageScorecard.length > 0) ? `
+    <div class="coverage-panel">
+      <div class="coverage-title">Coverage Transparency${stats.frameworks?.length ? ` &bull; Stack: ${stats.frameworks.map(f => escapeHtml(f)).join(', ')}` : ''}</div>
+      <div class="coverage-grid">
+        ${stats.coverageScorecard.map(c => `
+          <div class="coverage-chip">
+            <span class="cov-${escapeHtml(c.status)}">${c.status === 'ACTIVE' ? '✔ ACTIVE' : '▲ LIMITED'}</span>
+            <strong>${escapeHtml(c.target)}</strong>
+            <span style="color: var(--text-muted);">${escapeHtml(c.detail)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : ''}
 
     <div class="controls">
       <input type="text" id="searchInput" class="search-input" placeholder="Search by rule ID, title, filename, or code snippet...">

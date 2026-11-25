@@ -48,7 +48,7 @@ export function generateSarif(scanResult) {
         tool: {
           driver: {
             name: 'AuthWarden',
-            semanticVersion: '1.2.0',
+            semanticVersion: '1.6.0',
             informationUri: 'https://github.com/manhnv-vnext/authwarden',
             rules: sarifRules
           }
@@ -62,8 +62,22 @@ export function generateSarif(scanResult) {
 export function generateMarkdown(scanResult) {
   const { findings, stats } = scanResult;
 
+  const formatScorecard = () => {
+    if (!stats.coverageScorecard || stats.coverageScorecard.length === 0) return '';
+    let section = `\n#### 📊 Coverage Transparency\n`;
+    if (stats.frameworks?.length) {
+      section += `**Detected Stack:** ${stats.frameworks.map(f => `\`${f}\``).join(', ')}\n\n`;
+    }
+    section += `| Target / Language | Status | Scope |\n|:---|:---:|:---|\n`;
+    for (const item of stats.coverageScorecard) {
+      const badge = item.status === 'ACTIVE' ? '🟢 ACTIVE' : '🟡 LIMITED';
+      section += `| ${item.target} | ${badge} | ${item.detail} |\n`;
+    }
+    return section;
+  };
+
   if (findings.length === 0) {
-    return `### 🛡️ AuthWarden Security Scan: PASSED ✅\n\nNo authorization flaws, exposed secrets, or configuration risks detected across **${stats.filesScanned}** files.`;
+    return `### 🛡️ AuthWarden Security Scan: PASSED ✅\n\nNo authorization flaws, exposed secrets, or configuration risks detected across **${stats.filesScanned}** files.\n${formatScorecard()}`;
   }
 
   let md = `### 🛡️ AuthWarden Security Scan: ${findings.length} Finding(s) Detected ⚠️\n\n`;
@@ -74,6 +88,8 @@ export function generateMarkdown(scanResult) {
     const icon = f.severity === 'CRITICAL' ? '🔴' : f.severity === 'HIGH' ? '🟠' : '🟡';
     md += `| ${icon} **${f.severity}** | \`${f.ruleId}\` | ${f.title} | \`${f.file}\` | ${f.line} |\n`;
   });
+
+  md += formatScorecard();
 
   md += `\n<details><summary><b>Detailed Remediation Advice</b></summary>\n\n`;
   findings.forEach(f => {
