@@ -278,5 +278,54 @@ export function scanIaC(file) {
     }
   }
 
+  // 5. ASP.NET Core & Web Application Configuration (appsettings*.json / web.config)
+  if (fileName.startsWith('appsettings') && fileName.endsWith('.json')) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/TrustServerCertificate\s*=\s*(?:True|true)/i.test(line)) {
+        findings.push({
+          ruleId: 'CONF-001',
+          severity: 'HIGH',
+          title: 'Disabled Database TLS Certificate Validation (TrustServerCertificate=True)',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'Database connection string in application configuration specifies TrustServerCertificate=True, skipping TLS validation and allowing Man-in-the-Middle interception.',
+          remediation: 'Remove TrustServerCertificate=True and install a valid certificate on the database server.'
+        });
+      }
+      if (/"DetailedErrors"\s*:\s*true/i.test(line)) {
+        findings.push({
+          ruleId: 'CONF-002',
+          severity: 'MEDIUM',
+          title: 'Information Disclosure: DetailedErrors Enabled in Configuration',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'Detailed error diagnostics are enabled in application configuration. If deployed to production, raw stack traces, SQL queries, and server internals are exposed to users.',
+          remediation: 'Set "DetailedErrors": false in production configuration files.'
+        });
+      }
+    }
+  }
+
+  if (fileName === 'web.config') {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/<customErrors\s+[^>]*mode=["']Off["']/i.test(line)) {
+        findings.push({
+          ruleId: 'CONF-003',
+          severity: 'MEDIUM',
+          title: 'Information Disclosure: CustomErrors Mode Set to Off in Web.config',
+          file: relPath,
+          line: i + 1,
+          snippet: line.trim(),
+          description: 'CustomErrors mode="Off" forces ASP.NET to display raw unhandled exceptions and source code snippets to all remote users.',
+          remediation: 'Set <customErrors mode="RemoteOnly" /> or mode="On".'
+        });
+      }
+    }
+  }
+
   return findings;
 }

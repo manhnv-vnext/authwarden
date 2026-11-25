@@ -52,7 +52,7 @@ export const SECRET_RULES = [
     name: 'Database Connection String with Credentials',
     severity: 'CRITICAL',
     type: 'db_uri',
-    regex: /\b(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis):\/\/[a-zA-Z0-9_]+:[^@\s/:]+@[a-zA-Z0-9.-]+(?::[0-9]+)?(?:\/[a-zA-Z0-9_.-]*)?/g
+    regex: /\b(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis):\/\/[a-zA-Z0-9_]+:[^@\s/:]+@[a-zA-Z0-9.-]+(?::[0-9]+)?(?:\/[a-zA-Z0-9_.-]*)?|(?:Server|Data Source)\s*=[^\"'\r\n]+?;[^\"'\r\n]*?(?:User\s*Id|Uid|User)\s*=[^\"'\r\n]+?;[^\"'\r\n]*?(?:Password|Pwd)\s*=[^;\"'\r\n]+/gi
   },
   {
     id: 'SEC-008',

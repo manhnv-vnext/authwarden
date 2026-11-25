@@ -162,7 +162,7 @@ Audits `openapi.yaml`, `swagger.json`, and Postman collections for:
 - Insecure cleartext transport (`http://`) in production server URLs.
 
 ### 6. 📦 SCA & Known CVE Scanner with Reachability Analysis
-Audits `package.json`, `package-lock.json`, `requirements.txt`, `go.mod`, `composer.json`, `.csproj`, and `packages.lock.json` for high-severity CVEs across modern ecosystems (npm, PyPI, Go, Composer, and NuGet). Uses AST-guided reachability checks to distinguish between active dependencies and dormant ones, cutting alert noise by 80%.
+Audits `package.json`, `package-lock.json`, `requirements.txt`, `go.mod`, `composer.json`, `.csproj`, `packages.lock.json`, and `pom.xml` for high-severity CVEs across modern ecosystems (npm, PyPI, Go, Composer, NuGet, and Maven). Uses AST-guided reachability checks to distinguish between active dependencies and dormant ones, cutting alert noise by 80%.
 
 ### 7. 🤖 AI Agent & MCP Config Guard
 Audits Claude Desktop, Cursor, and custom AI agent tool manifests (`mcp.json`) to block unsandboxed shell execution (`bash`, `powershell`) and root filesystem access (`/`).
@@ -319,6 +319,7 @@ AuthWarden ships with 45+ precision rules across 8 security categories:
 | **API Contract** | `SPEC-002` | Explicit Public Security Override (`security: []`) | `HIGH` |
 | **API Contract** | `SPEC-003` | Sensitive Credential Defined as URL Query Parameter | `HIGH` |
 | **API Contract** | `SPEC-004` | Insecure Cleartext Transport (HTTP) in Server URL | `MEDIUM` |
+| **API Contract** | `SPEC-005` | Unconditional Swagger UI Registration in Production | `MEDIUM` |
 | **SAST & Taint** | `TAINT-001` | Taint Flow: Request Input Reaches Command Execution (RCE) | `CRITICAL` |
 | **SAST & Taint** | `TAINT-002` | Taint Flow: Request Input Reaches Raw SQL Query | `CRITICAL` |
 | **SAST & Taint** | `TAINT-003` | Taint Flow: Request Input Reaches File System Read | `HIGH` |
@@ -359,10 +360,13 @@ AuthWarden ships with 45+ precision rules across 8 security categories:
 | **AI & MCP** | `MCP-002` | Unrestricted Root Filesystem Path in MCP Server | `HIGH` |
 | **AI & MCP** | `MCP-003` | Hardcoded Secret in MCP Server Config | `CRITICAL` |
 | **AI & MCP** | `MCP-004` | Prompt Injection Risk in Agent System Prompt | `MEDIUM` |
-| **SCA & CVE** | `CVE-xxxx` | Known Vulnerable Dependency (npm, PyPI, Go, Composer) | `HIGH` / `CRITICAL` |
+| **SCA & CVE** | `CVE-xxxx` | Known Vulnerable Dependency (npm, PyPI, Go, Composer, NuGet, Maven) | `HIGH` / `CRITICAL` |
 | **SCA & CVE** | Reachability | Imported vs Dormant Dependency Vulnerability Tagging | `INFO` |
 | **Supply Chain** | `SUPPLY-001`| Suspicious Outbound Script in Package Lifecycle Hook | `CRITICAL` |
 | **Supply Chain** | `SUPPLY-002`| Unpinned Git Repository Dependency | `HIGH` |
+| **App Config** | `CONF-001` | Disabled Database TLS Certificate Validation (`TrustServerCertificate=True`) | `HIGH` |
+| **App Config** | `CONF-002` | DetailedErrors Enabled in Application Configuration | `MEDIUM` |
+| **App Config** | `CONF-003` | CustomErrors Mode Set to Off in `Web.config` | `MEDIUM` |
 | **Mobile Security** | `MOBILE-001`| Insecure Cleartext HTTP Traffic Allowed (Android / iOS ATS) | `HIGH` |
 | **Mobile Security** | `MOBILE-002`| Broad External Storage Permission Requested in AndroidManifest | `MEDIUM` |
 

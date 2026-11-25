@@ -150,7 +150,7 @@ export async function runScan(targetPath = '.', options = {}) {
 
     // 7. CVE & Software Composition Analysis (SCA) Scanner
     if (
-      ['package.json', 'package-lock.json', 'requirements.txt', 'go.mod', 'composer.json', 'packages.lock.json', 'directory.packages.props'].includes(file.name.toLowerCase()) ||
+      ['package.json', 'package-lock.json', 'requirements.txt', 'go.mod', 'composer.json', 'packages.lock.json', 'directory.packages.props', 'pom.xml'].includes(file.name.toLowerCase()) ||
       file.ext === '.csproj'
     ) {
       const cveFindings = await scanCVEs(file, files, options);
@@ -269,11 +269,11 @@ export async function runScan(targetPath = '.', options = {}) {
     status: 'ACTIVE',
     detail: '100% (All text & config files)'
   });
-  if (files.some(f => f.name.toLowerCase() === 'dockerfile' || f.name === 'docker-compose.yml' || f.ext === '.tf' || f.relative.includes('k8s/'))) {
+  if (files.some(f => f.name.toLowerCase() === 'dockerfile' || f.name === 'docker-compose.yml' || f.ext === '.tf' || f.relative.includes('k8s/') || (f.name.toLowerCase().startsWith('appsettings') && f.ext === '.json') || f.name.toLowerCase() === 'web.config')) {
     coverageScorecard.push({
-      target: 'IaC & Container Security',
+      target: 'IaC & Config Security',
       status: 'ACTIVE',
-      detail: 'Docker, Terraform, K8s rules'
+      detail: 'Docker, Terraform, K8s, appsettings'
     });
   }
   if (detectedExts.has('.cs') || files.some(f => f.ext === '.csproj')) {
@@ -283,11 +283,11 @@ export async function runScan(targetPath = '.', options = {}) {
       detail: 'Auth, BOLA, File Upload, SAST & NuGet SCA'
     });
   }
-  if (detectedExts.has('.java')) {
+  if (detectedExts.has('.java') || files.some(f => f.name.toLowerCase() === 'pom.xml')) {
     coverageScorecard.push({
       target: 'Java (Spring Boot)',
       status: 'ACTIVE',
-      detail: 'Auth & SAST rules'
+      detail: 'Auth, SAST & Maven SCA'
     });
   }
   if (detectedExts.has('.js') || detectedExts.has('.ts') || detectedExts.has('.jsx') || detectedExts.has('.tsx')) {

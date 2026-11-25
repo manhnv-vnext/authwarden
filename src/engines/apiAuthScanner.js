@@ -352,6 +352,28 @@ export function scanApiAuth(file) {
         }
       }
     }
+
+    // 5c. Check for Unconditional Swagger UI in Production (SPEC-005)
+    if (/\b(?:app|builder)\.UseSwaggerUI\s*\(/i.test(content)) {
+      const swaggerMatch = content.match(/\b(?:app|builder)\.UseSwaggerUI\s*\(/);
+      if (swaggerMatch) {
+        const prevCode = content.slice(Math.max(0, swaggerMatch.index - 350), swaggerMatch.index);
+        const hasDevCheck = /IsDevelopment\s*\(\s*\)/i.test(prevCode) || /IsEnvironment\s*\(\s*["']Development["']\s*\)/i.test(prevCode);
+        if (!hasDevCheck) {
+          const lineNo = content.slice(0, swaggerMatch.index).split('\n').length;
+          findings.push({
+            ruleId: 'SPEC-005',
+            severity: 'MEDIUM',
+            title: 'Unconditional Swagger UI Registration in Production',
+            file: relPath,
+            line: lineNo,
+            snippet: lines[lineNo - 1]?.trim(),
+            description: 'Swagger UI is registered without verifying whether the application is running in Development mode. In production, this publicly exposes internal API routes, data structures, and schemas to unauthenticated attackers.',
+            remediation: 'Wrap Swagger in an environment check: if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }'
+          });
+        }
+      }
+    }
   }
 
   // 6. Java Spring Boot Controllers

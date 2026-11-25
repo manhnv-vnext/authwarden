@@ -312,6 +312,41 @@ export const CURATED_CVE_DB = [
     title: 'Arbitrary File Overwrite / Directory Traversal in AWSSDK.Core',
     description: 'AWSSDK.Core allows arbitrary file writes on extraction when handling crafted S3 object keys.',
     remediation: 'Upgrade AWSSDK.Core and AWSSDK.S3 to >= 3.7.0.25.'
+  },
+
+  // ─── Maven (Java / Spring Boot) ──────────────────────────────────────────
+  {
+    ecosystem: 'maven',
+    package: 'log4j-core',
+    affectedVersion: '< 2.17.1',
+    fixedVersion: '2.17.1',
+    cve: 'CVE-2021-44228',
+    severity: 'CRITICAL',
+    title: 'Log4Shell: Remote Code Execution in Apache Log4j',
+    description: 'JNDI features used in configuration and message lookup allow arbitrary remote code execution via LDAP/RMI.',
+    remediation: 'Upgrade org.apache.logging.log4j:log4j-core to 2.17.1 or higher.'
+  },
+  {
+    ecosystem: 'maven',
+    package: 'spring-beans',
+    affectedVersion: '< 5.3.18',
+    fixedVersion: '5.3.18',
+    cve: 'CVE-2022-22965',
+    severity: 'CRITICAL',
+    title: 'Spring4Shell: Remote Code Execution in Spring Framework',
+    description: 'Spring MVC / WebFlux on JDK 9+ allows RCE via data binding to classLoader properties.',
+    remediation: 'Upgrade org.springframework:spring-beans and spring-webmvc to >= 5.3.18 or >= 5.2.20.'
+  },
+  {
+    ecosystem: 'maven',
+    package: 'jackson-databind',
+    affectedVersion: '< 2.13.4',
+    fixedVersion: '2.13.4',
+    cve: 'CVE-2022-42003',
+    severity: 'HIGH',
+    title: 'Denial of Service / Polymorphic Deserialization in Jackson-databind',
+    description: 'Deeply nested arrays or crafted polymorphic gadgets in jackson-databind trigger resource exhaustion or RCE.',
+    remediation: 'Upgrade com.fasterxml.jackson.core:jackson-databind to 2.13.4 or higher.'
   }
 ];
 
@@ -600,6 +635,44 @@ export async function scanCVEs(file, allFiles = [], options = {}) {
     }
   }
 
+  // 7. Scan pom.xml (Maven / Java dependencies)
+  if (fileName === 'pom.xml') {
+    const depRegex = /<dependency>([\s\S]*?)<\/dependency>/gi;
+    let depMatch;
+    while ((depMatch = depRegex.exec(content)) !== null) {
+      const block = depMatch[1];
+      const artMatch = block.match(/<artifactId>([^<]+)<\/artifactId>/i);
+      const verMatch = block.match(/<version>([^<]+)<\/version>/i);
+
+      if (artMatch && verMatch) {
+        const artifactId = artMatch[1].trim();
+        const version = verMatch[1].trim();
+
+        const match = CURATED_CVE_DB.find(
+          item => item.ecosystem === 'maven' && item.package.toLowerCase() === artifactId.toLowerCase()
+        );
+
+        if (match && isVersionPotentiallyVulnerable(version, match.fixedVersion)) {
+          const isReachable = checkPackageReachable(artifactId, allFiles, 'maven');
+          const lineNo = content.slice(0, depMatch.index).split('\n').length;
+
+          findings.push({
+            ruleId: match.cve,
+            severity: match.severity,
+            title: `${match.title} (${artifactId} ${version})`,
+            file: relPath,
+            line: lineNo,
+            snippet: `<artifactId>${artifactId}</artifactId>\n<version>${version}</version>`,
+            isReachable,
+            description: `${match.description} (Affected: ${match.affectedVersion}).` +
+              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Installed Maven dependency)'),
+            remediation: `${match.remediation} (Current version: ${version})`
+          });
+        }
+      }
+    }
+  }
+
   return findings;
 }
 
@@ -638,6 +711,23 @@ function getCandidateCodes(allFiles, exts = ['.js', '.jsx', '.ts', '.tsx', '.mjs
 }
 
 function checkPackageReachable(pkgName, allFiles, ecosystem = 'npm') {
+  if (ecosystem === 'maven') {
+    const javaCodes = getCandidateCodes(allFiles, ['.java']);
+    let nsPattern = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (pkgName.toLowerCase() === 'log4j-core') {
+      nsPattern = '(?:org\\.apache\\.logging\\.log4j|LogManager|Logger)';
+    } else if (pkgName.toLowerCase() === 'jackson-databind') {
+      nsPattern = '(?:com\\.fasterxml\\.jackson|ObjectMapper)';
+    } else if (pkgName.toLowerCase() === 'spring-beans' || pkgName.toLowerCase() === 'spring-core') {
+      nsPattern = 'org\\.springframework';
+    }
+    const regex = new RegExp(`(?:import\\s+[^;]*${nsPattern}|\\b${nsPattern}\\b)`, 'i');
+    for (const code of javaCodes) {
+      if (regex.test(code)) return true;
+    }
+    return false;
+  }
+
   if (ecosystem === 'nuget') {
     const csCodes = getCandidateCodes(allFiles, ['.cs']);
     let nsPattern = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

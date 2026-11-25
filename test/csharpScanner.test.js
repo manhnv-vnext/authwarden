@@ -431,3 +431,103 @@ public static class AuthConfig
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('detects SEC-007, CONF-001, CONF-002 in appsettings.json and CONF-003 in Web.config', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-appsettings-'));
+  const appsettingsFile = path.join(tmpDir, 'appsettings.Production.json');
+  const webConfigFile = path.join(tmpDir, 'Web.config');
+
+  const appsettings = {
+    DetailedErrors: true,
+    ConnectionStrings: {
+      DefaultConnection: ['Server=prod-sql.internal', 'Database=SatoDb', 'User Id=sa', 'Password=Pr0d!SqlP@ss', 'TrustServerCertificate=True;'].join(';')
+    }
+  };
+  const webConfig = `<configuration><system.web><customErrors mode="Off" /></system.web></configuration>`;
+
+  fs.writeFileSync(appsettingsFile, JSON.stringify(appsettings, null, 2));
+  fs.writeFileSync(webConfigFile, webConfig);
+
+  const res = await runScan(tmpDir);
+  assert.ok(res.findings.some(f => f.ruleId === 'SEC-007'), 'Should detect ADO.NET plaintext DB credentials (SEC-007)');
+  assert.ok(res.findings.some(f => f.ruleId === 'CONF-001'), 'Should detect TrustServerCertificate=True (CONF-001)');
+  assert.ok(res.findings.some(f => f.ruleId === 'CONF-002'), 'Should detect DetailedErrors: true (CONF-002)');
+  assert.ok(res.findings.some(f => f.ruleId === 'CONF-003'), 'Should detect customErrors mode="Off" in Web.config (CONF-003)');
+  assert.ok(res.stats.coverageScorecard.some(c => c.target.includes('IaC & Config') && c.status === 'ACTIVE'));
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('detects unconditional Swagger UI in Program.cs (SPEC-005) and skips gated IsDevelopment', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-swagger-'));
+  const prodProgram = path.join(tmpDir, 'Program.cs');
+  const devProgram = path.join(tmpDir, 'DevProgram.cs');
+
+  fs.writeFileSync(prodProgram, `
+var app = builder.Build();
+app.UseSwagger();
+app.UseSwaggerUI();
+app.Run();
+`);
+  fs.writeFileSync(devProgram, `
+var app = builder.Build();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+app.Run();
+`);
+
+  const res = await runScan(tmpDir);
+  const spec005 = res.findings.filter(f => f.ruleId === 'SPEC-005');
+  assert.equal(spec005.length, 1, 'Should flag only unconditional UseSwaggerUI in Program.cs');
+  assert.equal(spec005[0].file, 'Program.cs');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('detects Maven CVEs in pom.xml with Java reachability analysis', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-maven-'));
+  const pomFile = path.join(tmpDir, 'pom.xml');
+  const javaFile = path.join(tmpDir, 'AppLogger.java');
+
+  const pomXml = `
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <version>2.14.1</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.12.0</version>
+    </dependency>
+  </dependencies>
+</project>
+`;
+  const javaCode = `
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+public class AppLogger {
+    private static final Logger logger = LogManager.getLogger(AppLogger.class);
+}
+`;
+  fs.writeFileSync(pomFile, pomXml);
+  fs.writeFileSync(javaFile, javaCode);
+
+  const res = await runScan(tmpDir);
+  const log4j = res.findings.find(f => f.ruleId === 'CVE-2021-44228');
+  const jackson = res.findings.find(f => f.ruleId === 'CVE-2022-42003');
+
+  assert.ok(log4j, 'Should detect Log4Shell CVE-2021-44228 in pom.xml');
+  assert.equal(log4j.isReachable, true, 'log4j-core should be reachable via Java import');
+  assert.ok(jackson, 'Should detect Jackson CVE-2022-42003 in pom.xml');
+  assert.equal(jackson.isReachable, false, 'jackson-databind is not imported in Java source');
+  assert.ok(res.stats.coverageScorecard.some(c => c.target.includes('Java') && c.detail.includes('Maven SCA')));
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

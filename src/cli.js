@@ -18,7 +18,7 @@ export async function cli(args = []) {
   }
 
   if (args.includes('--version') || args.includes('-v') || args[0] === 'version') {
-    console.log('authwarden v1.5.0');
+    console.log('authwarden v1.6.0');
     return 0;
   }
 
@@ -359,6 +359,7 @@ ${colors.bold('OPENAPI & API SPEC CONTRACTS:')}
   • ${colors.yellow('SPEC-002')}  Explicit Public Security Override (security: []) on Restricted Route
   • ${colors.yellow('SPEC-003')}  Sensitive Credential Passed via URL Query Parameter
   • ${colors.blue('SPEC-004')}    Insecure Cleartext Transport (HTTP) in Server URL
+  • ${colors.blue('SPEC-005')}    Unconditional Swagger UI Registration in Production
 
 ${colors.bold('AI AGENT & MCP TOOLS:')}
   • ${colors.red('MCP-001')}   Unsandboxed Shell Execution Tool in MCP Config
@@ -367,10 +368,15 @@ ${colors.bold('AI AGENT & MCP TOOLS:')}
   • ${colors.blue('MCP-004')}   Prompt Injection Concatenation in System Instructions
 
 ${colors.bold('SCA & KNOWN CVE VULNERABILITIES:')}
-  • ${colors.red('CVE-xxxx')}  Known High/Critical Vulnerabilities in Dependencies (npm, PyPI, Go, Composer, NuGet)
+  • ${colors.red('CVE-xxxx')}  Known High/Critical Vulnerabilities in Dependencies (npm, PyPI, Go, Composer, NuGet, Maven)
   • ${colors.bold('Reachability')} AST-guided Reachability Analysis (Flags Imported vs Dormant Vulnerabilities)
   • ${colors.yellow('SUPPLY-001')} Lifecycle Script Exfiltration Risk in package.json
   • ${colors.blue('SUPPLY-002')} Unpinned Git Repository Dependency
+
+${colors.bold('APP CONFIGURATION SECURITY:')}
+  • ${colors.yellow('CONF-001')}  Disabled Database TLS Certificate Validation (TrustServerCertificate=True)
+  • ${colors.blue('CONF-002')}  DetailedErrors Enabled in Application Configuration
+  • ${colors.blue('CONF-003')}  CustomErrors Mode Set to Off in Web.config
 
 ${colors.bold('MOBILE APPLICATION SECURITY:')}
   • ${colors.yellow('MOBILE-001')} Insecure Cleartext Traffic Allowed (Android Network Security Config / iOS ATS)
