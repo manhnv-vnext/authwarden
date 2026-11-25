@@ -7,7 +7,7 @@ import { printTerminalReport } from './reporters/terminalReporter.js';
 import { generateSarif, generateMarkdown, generateJson } from './reporters/sarifReporter.js';
 import { generateHtml } from './reporters/htmlReporter.js';
 import { colors } from './utils/colors.js';
-import { getGitChangedFiles } from './utils/git.js';
+import { createStagedSnapshot } from './utils/git.js';
 import { loadConfig } from './utils/config.js';
 import { saveBaseline, applyBaseline } from './utils/baseline.js';
 import { VERSION } from './utils/version.js';
@@ -66,11 +66,33 @@ export async function cli(args = []) {
     }
   }
 
+  // Untrusted mode: the scanned repository is input only (use for pull requests from forks)
+  const untrusted = args.includes('--untrusted') || process.env.INPUT_UNTRUSTED === 'true' || process.env.AUTHWARDEN_UNTRUSTED === 'true';
+
   const customConfigPath = getArgValue(args, '--config');
-  const { config } = loadConfig(customConfigPath || targetDir);
+  if (customConfigPath && !fs.existsSync(path.resolve(customConfigPath))) {
+    console.error(colors.red(`Config file not found: ${customConfigPath}`));
+    return 2;
+  }
+  const loaded = customConfigPath || !untrusted ? loadConfig(customConfigPath || targetDir) : { config: {}, configPath: null };
+  const config = loaded.config;
+
+  // A config discovered inside the scanned repository may tune the scan, but it may not
+  // make the tool write files, wait forever or open network connections.
+  if (!customConfigPath && loaded.configPath) {
+    const refused = ['output', 'watch', 'verify', 'online'].filter(k => config[k] !== undefined && config[k] !== false && config[k] !== null);
+    for (const k of refused) delete config[k];
+    if (refused.length) {
+      console.error(colors.yellow(`[AuthWarden] Ignoring ${refused.map(k => '"' + k + '"').join(', ')} from ${loaded.configPath}: these options are only accepted on the command line or via --config.`));
+    }
+    const tuned = ['ignoreRules', 'ignorePaths', 'allowSecrets', 'authIdentifiers', 'baseline'].filter(k => Array.isArray(config[k]) ? config[k].length : config[k]);
+    if (tuned.length) {
+      console.error(colors.gray(`[AuthWarden] ${loaded.configPath} sets ${tuned.join(', ')}. Use --untrusted to ignore repository configuration.`));
+    }
+  }
 
   const isStaged = args.includes('--staged') || process.env.INPUT_STAGED === 'true';
-  const isWatch = args.includes('--watch') || config.watch === true;
+  const isWatch = !routesOnly && (args.includes('--watch') || config.watch === true);
 
   const options = {
     online: args.includes('--online') || process.env.INPUT_ONLINE === 'true' || config.online === true,
@@ -83,28 +105,52 @@ export async function cli(args = []) {
     baseline: getArgValue(args, '--baseline') || config.baseline || null,
     saveBaseline: getArgValue(args, '--save-baseline') || null,
     allowSecrets: config.allowSecrets || [],
+    authIdentifiers: config.authIdentifiers || [],
     ignoreRules: config.ignoreRules || [],
     ignorePaths: config.ignorePaths || [],
-    rulesDir: config.rulesDir || null
+    rulesDir: config.rulesDir || null,
+    untrusted
   };
+
+  const FORMATS = ['terminal', 'html', 'sarif', 'markdown', 'md', 'json'];
+  if (!FORMATS.includes(String(options.format).toLowerCase())) {
+    console.error(colors.red(`Unknown --format "${options.format}". Use one of: terminal, html, sarif, markdown, json.`));
+    return 2;
+  }
+  options.format = String(options.format).toLowerCase();
+  const FAIL_LEVELS = ['critical', 'high', 'medium', 'low'];
+  if (!FAIL_LEVELS.includes(String(options.failOn).trim().toLowerCase())) {
+    console.error(colors.red(`Unknown --fail-on "${options.failOn}". Use one of: critical, high, medium, low.`));
+    return 2;
+  }
+  options.failOn = String(options.failOn).trim().toLowerCase();
+  if (options.output && options.format === 'terminal' && !routesOnly) {
+    console.error(colors.yellow('[AuthWarden] --output is ignored with the terminal format; add --format html, sarif, markdown or json.'));
+  }
 
   if (options.watch) {
     return startWatchMode(targetDir, options);
   }
 
+  // Staged mode scans a snapshot of the git index: the content that would be committed
+  let scanDir = targetDir;
+  let stagedSnapshot = null;
   if (isStaged) {
-    const stagedFiles = getGitChangedFiles(targetDir, { stagedOnly: true });
-    if (stagedFiles) {
-      if (stagedFiles.length === 0) {
-        console.log(colors.green('✔ No staged git files to scan. Pre-commit check passed.'));
-        return 0;
-      }
-      options.onlyFiles = stagedFiles;
+    stagedSnapshot = createStagedSnapshot(targetDir);
+    if (!stagedSnapshot) {
+      console.error(colors.yellow('[AuthWarden] --staged needs a git repository; scanning the working tree instead.'));
+    } else if (stagedSnapshot.onlyFiles.length === 0) {
+      console.log(colors.green('✔ No staged git files to scan. Pre-commit check passed.'));
+      return 0;
+    } else {
+      scanDir = stagedSnapshot.scanDir;
+      options.onlyFiles = stagedSnapshot.onlyFiles;
     }
   }
 
   try {
-    const scanResult = await runScan(targetDir, options);
+    const scanResult = await runScan(scanDir, options);
+    if (stagedSnapshot) scanResult.targetDir = path.resolve(targetDir) + ' (staged changes)';
 
     // Route inventory mode: list every discovered endpoint and how it is protected
     if (routesOnly) {
@@ -170,6 +216,7 @@ export async function cli(args = []) {
     console.error(colors.red(`Error during scan: ${err.message}`));
     return 2;
   } finally {
+    if (stagedSnapshot) stagedSnapshot.cleanup();
     if (tempZipDir && fs.existsSync(tempZipDir)) {
       try {
         fs.rmSync(tempZipDir, { recursive: true, force: true });
@@ -234,7 +281,7 @@ async function startWatchMode(targetDir, options) {
 
 function printRoutes(scanResult, options) {
   const routes = scanResult.routes || [];
-  const summary = scanResult.stats.routes || { total: 0, protected: 0, unprotected: 0 };
+  const summary = scanResult.stats.routes || { total: 0, protected: 0, unprotected: 0, unknown: 0 };
 
   if (options.format === 'json') {
     const text = JSON.stringify({ summary, routes }, null, 2);
@@ -248,19 +295,21 @@ function printRoutes(scanResult, options) {
   }
 
   console.log('');
-  console.log(colors.bold(`Route inventory: ${summary.total} route(s), ${summary.protected} protected, ${summary.unprotected} without detected auth`));
+  console.log(colors.bold(`Route inventory: ${summary.total} route(s), ${summary.protected} protected, ${summary.unprotected} without detected auth, ${summary.unknown || 0} unknown`));
   console.log(colors.gray('─'.repeat(72)));
   if (routes.length === 0) {
     console.log(colors.gray('  No routes discovered (supported: Next.js, Express, Fastify, FastAPI, ASP.NET Core, Spring).'));
   }
-  const sorted = [...routes].sort((a, b) => (a.auth === b.auth ? a.path.localeCompare(b.path) : a.auth === 'unprotected' ? -1 : 1));
+  const rank = { unprotected: 0, unknown: 1, protected: 2 };
+  const sorted = [...routes].sort((a, b) => (rank[a.auth] - rank[b.auth]) || a.path.localeCompare(b.path));
   for (const r of sorted) {
-    const status = r.auth === 'protected' ? colors.green('PROTECTED  ') : colors.yellow('UNPROTECTED');
+    const status = r.auth === 'protected' ? colors.green('PROTECTED  ') : r.auth === 'unknown' ? colors.cyan('UNKNOWN    ') : colors.yellow('UNPROTECTED');
     console.log(`  ${status} ${colors.bold(r.method.padEnd(7))}${r.path}`);
     console.log(colors.gray(`              ${r.file}:${r.line} · ${r.framework} · ${r.evidence}`));
   }
   console.log('');
   console.log(colors.gray('  "Unprotected" means no auth was detected statically; public endpoints such as login or health checks are expected here.'));
+  console.log(colors.gray('  "Unknown" means middleware is present but not recognised as auth; name it under "authIdentifiers" in .authwardenrc.json if it is.'));
   console.log('');
   return 0;
 }
@@ -295,6 +344,8 @@ ${colors.bold('OPTIONS:')}
   --config <file>     Path to custom configuration file (.authwardenrc.json)
   --staged            Scan only staged git changes (fast for pre-commit hooks)
   --online            Look up dependency versions on OSV.dev (sends package names and versions only)
+  --untrusted         Treat the scanned repo as input only: ignore its config, rules/, inline
+                      suppressions and .gitignore (use for pull requests from forks)
   --verify            Safely verify detected secrets against live APIs (Stripe, GitHub, OpenAI, Anthropic, Slack)
   -v, --version       Show version number
   -h, --help          Show this help message
@@ -324,8 +375,14 @@ function installPreCommitHook() {
   const hookScript = `#!/usr/bin/env sh
 # AuthWarden Pre-commit Security Gate
 echo "🛡️  Running AuthWarden pre-commit security check..."
-npx authwarden scan . --staged --fail-on high
+npx --yes github:manhnv-vnext/authwarden scan . --staged --fail-on high
 `;
+
+  if (fs.existsSync(hookFile)) {
+    console.error(colors.red('Error: .git/hooks/pre-commit already exists. Add this line to it instead:'));
+    console.error('  npx --yes github:manhnv-vnext/authwarden scan . --staged --fail-on high');
+    return 1;
+  }
 
   try {
     fs.writeFileSync(hookFile, hookScript, { mode: 0o755 });

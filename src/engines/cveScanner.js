@@ -1,5 +1,4 @@
 import fs from 'fs';
-import { readText } from '../utils/fileContext.js';
 import { extractDependencies } from './dependencies.js';
 
 /**
@@ -33,8 +32,11 @@ for (const entry of CURATED_CVE_DB) {
 
 const RELEASE_QUALIFIERS = new Set(['release', 'final', 'ga']);
 
+const POST_RELEASE = new Set(['post', 'sp', 'patch']);
+
 function versionTokens(version) {
-  return String(version).trim().replace(/^v/i, '').split('+')[0].split(/[.\-_]/)
+  return String(version).trim().replace(/^v/i, '').split('+')[0]
+    .split(/[.\-_]|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])/)
     .filter(t => t !== '' && !RELEASE_QUALIFIERS.has(t.toLowerCase()));
 }
 
@@ -48,8 +50,9 @@ export function compareVersions(a, b) {
     if (x === y) continue;
     const xn = x !== undefined && /^\d+$/.test(x);
     const yn = y !== undefined && /^\d+$/.test(y);
-    if (x === undefined) return yn ? (Number(y) === 0 ? 0 : -1) : 1; // "2.0" == "2.0.0", "5.0.0" > "5.0.0-beta"
-    if (y === undefined) return xn ? (Number(x) === 0 ? 0 : 1) : -1;
+    // "2.0" == "2.0.0"; "5.0.0" > "5.0.0-beta"; "2.0.post1" > "2.0"
+    if (x === undefined) return yn ? (Number(y) === 0 ? 0 : -1) : POST_RELEASE.has(y.toLowerCase()) ? -1 : 1;
+    if (y === undefined) return xn ? (Number(x) === 0 ? 0 : 1) : POST_RELEASE.has(x.toLowerCase()) ? 1 : -1;
     if (xn && yn) {
       if (Number(x) !== Number(y)) return Number(x) - Number(y);
       continue;
@@ -75,6 +78,7 @@ export function isVersionAffected(version, ranges = []) {
 function baseVersion(spec) {
   const text = String(spec || '');
   if (!/\d/.test(text) || /^(?:git\+|https?:|file:|github:|workspace:|link:|npm:)/i.test(text)) return null;
+  if (/^\s*</.test(text)) return null; // an upper bound alone does not name a version
   const clean = text.replace(/[\^~>=<\[\]()]/g, '').trim().split(/\s+|\|\||,/)[0];
   return /^v?\d/.test(clean) ? clean : null;
 }
@@ -120,323 +124,45 @@ export function findVulns(ecosystem, packageName, versionSpec) {
   return hits;
 }
 
+const ECOSYSTEM_KEYS = { npm: 'npm', PyPI: 'pypi', Go: 'go', Packagist: 'composer', NuGet: 'nuget', Maven: 'maven' };
+const REACHABILITY = new Set(['npm', 'nuget', 'maven']);
+
+/**
+ * Reports every advisory in the offline snapshot that affects a dependency
+ * declared in this manifest or lockfile. Parsing is shared with the OSV.dev
+ * lookup (engines/dependencies.js), so both see the same versions.
+ */
 export async function scanCVEs(file, allFiles = [], options = {}) {
   const findings = [];
-  const fileName = file.name.toLowerCase();
   const relPath = file.relative.replace(/\\/g, '/');
 
-  const content = readText(file);
-  if (content === null) return findings;
+  for (const dep of extractDependencies(file, allFiles)) {
+    const ecosystem = ECOSYSTEM_KEYS[dep.ecosystem];
+    if (!ecosystem) continue;
+    const name = ecosystem === 'maven' ? (dep.importName || dep.name) : dep.name;
+    const matches = findVulns(ecosystem, name, dep.version);
+    if (matches.length === 0) continue;
 
-  // 1. Scan package.json
-  if (fileName === 'package.json') {
-    try {
-      const pkg = JSON.parse(content);
-      const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    const isReachable = REACHABILITY.has(ecosystem) ? checkPackageReachable(name, allFiles, ecosystem) : undefined;
+    const origin = dep.locked ? 'Resolved dependency in lockfile' : dep.declaredRange ? `Declared as "${dep.declaredRange}"; no lockfile found, so the lowest allowed version is assumed` : 'Declared dependency';
 
-      for (const [depName, versionSpec] of Object.entries(allDeps)) {
-        for (const match of findVulns('npm', depName.toLowerCase(), versionSpec)) {
-          const isReachable = checkPackageReachable(depName, allFiles);
-          const lineNo = findLineNumber(content, `"${depName}"`);
-
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${depName} ${versionSpec})`,
-            file: relPath,
-            line: lineNo,
-            snippet: `"${depName}": "${versionSpec}"`,
-            isReachable,
-            description: `${match.description} (Affected: ${match.affectedVersion}).` +
-              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Installed dependency)'),
-            remediation: `${match.remediation} (Current version: ${versionSpec})`
-          });
-        }
-      }
-    } catch {
-      // Skip invalid json
-    }
-  }
-
-  // 1b. Scan package-lock.json (Resolved dependencies including transitive)
-  if (fileName === 'package-lock.json') {
-    try {
-      const lock = JSON.parse(content);
-      const scannedPkgs = new Set();
-      
-      const checkDep = (depName, version) => {
-        if (!depName || !version || scannedPkgs.has(depName + '@' + version)) return;
-        scannedPkgs.add(depName + '@' + version);
-
-        for (const match of findVulns('npm', depName.toLowerCase(), version)) {
-          const isReachable = checkPackageReachable(depName, allFiles);
-          const lineNo = findLineNumber(content, `"${depName}"`);
-
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${depName} ${version}) [lockfile]`,
-            file: relPath,
-            line: lineNo,
-            snippet: `"${depName}": "${version}"`,
-            isReachable,
-            description: `${match.description} (Affected: ${match.affectedVersion}).` +
-              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Resolved dependency in lockfile)'),
-            remediation: `${match.remediation} (Resolved: ${version})`
-          });
-        }
-      };
-
-      if (lock.packages) {
-        for (const [pkgPath, pkgInfo] of Object.entries(lock.packages)) {
-          if (!pkgPath || !pkgInfo.version) continue;
-          const depName = pkgPath.replace(/^.*node_modules\//, '');
-          checkDep(depName, pkgInfo.version);
-        }
-      } else if (lock.dependencies) {
-        for (const [depName, depInfo] of Object.entries(lock.dependencies)) {
-          if (depInfo && depInfo.version) {
-            checkDep(depName, depInfo.version);
-          }
-        }
-      }
-    } catch {
-      // Skip invalid json
-    }
-  }
-
-  // 1c. yarn.lock / pnpm-lock.yaml / poetry.lock (resolved versions)
-  if (fileName === 'yarn.lock' || fileName === 'pnpm-lock.yaml' || fileName === 'poetry.lock') {
-    for (const dep of extractDependencies(file, allFiles)) {
-      const ecosystem = dep.ecosystem === 'PyPI' ? 'pypi' : 'npm';
-      const matches = findVulns(ecosystem, dep.name, dep.version);
-      if (matches.length === 0) continue;
-      const isReachable = ecosystem === 'npm' ? checkPackageReachable(dep.name, allFiles) : undefined;
-      for (const match of matches) {
-        findings.push({
-          ruleId: match.cve,
-          severity: match.severity,
-          title: `${match.title} (${dep.name} ${dep.version}) [lockfile]`,
-          file: relPath,
-          line: dep.line,
-          snippet: `${dep.name}@${dep.version}`,
-          ...(isReachable === undefined ? {} : { isReachable }),
-          description: `${match.description} (Affected: ${match.affectedVersion}).` +
-            (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Resolved dependency in lockfile)'),
-          remediation: `${match.remediation} (Resolved: ${dep.version})`
-        });
-      }
-    }
-  }
-
-  // 2. Scan requirements.txt
-  if (fileName === 'requirements.txt') {
-    const lines = content.split('\n');
-    lines.forEach((line, idx) => {
-      const cleanLine = line.trim().split('#')[0];
-      if (!cleanLine) return;
-
-      const matchPart = cleanLine.match(/^([a-zA-Z0-9_\-]+)(?:==|<=|>=|<|>|~=)\s*(.+)$/);
-      if (matchPart) {
-        const pkgName = matchPart[1].toLowerCase();
-        const version = matchPart[2].trim();
-
-        for (const match of findVulns('pypi', pkgName, version)) {
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${pkgName} ${version})`,
-            file: relPath,
-            line: idx + 1,
-            snippet: cleanLine,
-            description: `${match.description} (Affected: ${match.affectedVersion}).`,
-            remediation: `${match.remediation} (Current: ${version})`
-          });
-        }
-      }
-    });
-  }
-
-  // 3. Scan go.mod
-  if (fileName === 'go.mod') {
-    const lines = content.split('\n');
-    lines.forEach((line, idx) => {
-      const matchPart = line.trim().match(/^([a-zA-Z0-9.\-_/]+)\s+v([0-9.]+)/);
-      if (matchPart) {
-        const modName = matchPart[1];
-        const version = matchPart[2];
-
-        for (const match of findVulns('go', modName.toLowerCase(), version)) {
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${modName} v${version})`,
-            file: relPath,
-            line: idx + 1,
-            snippet: line.trim(),
-            description: `${match.description} (Affected: ${match.affectedVersion}).`,
-            remediation: `${match.remediation} (Current: v${version})`
-          });
-        }
-      }
-    });
-  }
-
-  // 4. Scan composer.json
-  if (fileName === 'composer.json') {
-    try {
-      const comp = JSON.parse(content);
-      const reqs = { ...(comp.require || {}), ...(comp['require-dev'] || {}) };
-
-      for (const [depName, versionSpec] of Object.entries(reqs)) {
-        for (const match of findVulns('composer', depName.toLowerCase(), versionSpec)) {
-          const lineNo = findLineNumber(content, `"${depName}"`);
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${depName} ${versionSpec})`,
-            file: relPath,
-            line: lineNo,
-            snippet: `"${depName}": "${versionSpec}"`,
-            description: `${match.description} (Affected: ${match.affectedVersion}).`,
-            remediation: `${match.remediation} (Current: ${versionSpec})`
-          });
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  // 5. Scan .csproj and Directory.Packages.props (NuGet / .NET)
-  if (file.ext === '.csproj' || fileName === 'directory.packages.props') {
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!/<(?:PackageReference|PackageVersion)\b/i.test(line)) continue;
-
-      const incMatch = line.match(/\bInclude=["']([^"']+)["']/i);
-      const verMatch = line.match(/\bVersion=["']([^"']+)["']/i);
-
-      let pkgName = incMatch ? incMatch[1] : null;
-      let version = verMatch ? verMatch[1] : null;
-
-      // Check nested <Version> child tag if version attribute not on same line
-      if (pkgName && !version) {
-        for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
-          const subVer = lines[j].match(/<Version>([^<]+)<\/Version>/i);
-          if (subVer) {
-            version = subVer[1].trim();
-            break;
-          }
-          if (lines[j].includes('</PackageReference>') || lines[j].includes('</PackageVersion>')) break;
-        }
-      }
-
-      if (pkgName && version) {
-        for (const match of findVulns('nuget', pkgName.toLowerCase(), version)) {
-          const isReachable = checkPackageReachable(pkgName, allFiles, 'nuget');
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${pkgName} ${version})`,
-            file: relPath,
-            line: i + 1,
-            snippet: line.trim(),
-            isReachable,
-            description: `${match.description} (Affected: ${match.affectedVersion}).` +
-              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Installed NuGet dependency)'),
-            remediation: `${match.remediation} (Current version: ${version})`
-          });
-        }
-      }
-    }
-  }
-
-  // 6. Scan packages.lock.json (Resolved NuGet dependencies)
-  if (fileName === 'packages.lock.json') {
-    try {
-      const lock = JSON.parse(content);
-      const scannedNuget = new Set();
-
-      const checkNuget = (depName, version) => {
-        if (!depName || !version || scannedNuget.has(depName + '@' + version)) return;
-        scannedNuget.add(depName + '@' + version);
-
-        for (const match of findVulns('nuget', depName.toLowerCase(), version)) {
-          const isReachable = checkPackageReachable(depName, allFiles, 'nuget');
-          const lineNo = findLineNumber(content, `"${depName}"`);
-
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${depName} ${version}) [NuGet lockfile]`,
-            file: relPath,
-            line: lineNo,
-            snippet: `"${depName}": "${version}"`,
-            isReachable,
-            description: `${match.description} (Affected: ${match.affectedVersion}).` +
-              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Resolved NuGet dependency in lockfile)'),
-            remediation: `${match.remediation} (Resolved: ${version})`
-          });
-        }
-      };
-
-      if (lock.dependencies && typeof lock.dependencies === 'object') {
-        for (const [tf, deps] of Object.entries(lock.dependencies)) {
-          if (deps && typeof deps === 'object') {
-            for (const [depName, depInfo] of Object.entries(deps)) {
-              const ver = depInfo.resolved || depInfo.version;
-              if (ver) checkNuget(depName, ver);
-            }
-          }
-        }
-      }
-    } catch {
-      // skip invalid json
-    }
-  }
-
-  // 7. Scan pom.xml (Maven / Java dependencies)
-  if (fileName === 'pom.xml') {
-    const depRegex = /<dependency>([\s\S]*?)<\/dependency>/gi;
-    let depMatch;
-    while ((depMatch = depRegex.exec(content)) !== null) {
-      const block = depMatch[1];
-      const artMatch = block.match(/<artifactId>([^<]+)<\/artifactId>/i);
-      const verMatch = block.match(/<version>([^<]+)<\/version>/i);
-
-      if (artMatch && verMatch) {
-        const artifactId = artMatch[1].trim();
-        const version = verMatch[1].trim();
-
-        for (const match of findVulns('maven', artifactId.toLowerCase(), version)) {
-          const isReachable = checkPackageReachable(artifactId, allFiles, 'maven');
-          const lineNo = content.slice(0, depMatch.index).split('\n').length;
-
-          findings.push({
-            ruleId: match.cve,
-            severity: match.severity,
-            title: `${match.title} (${artifactId} ${version})`,
-            file: relPath,
-            line: lineNo,
-            snippet: `<artifactId>${artifactId}</artifactId>\n<version>${version}</version>`,
-            isReachable,
-            description: `${match.description} (Affected: ${match.affectedVersion}).` +
-              (isReachable ? ' ⚠️ REACHABLE IN SOURCE: Package is imported in application code.' : ' (Installed Maven dependency)'),
-            remediation: `${match.remediation} (Current version: ${version})`
-          });
-        }
-      }
+    for (const match of matches) {
+      findings.push({
+        ruleId: match.cve,
+        severity: match.severity,
+        title: `${match.title} (${name} ${dep.version})` + (dep.locked ? ' [lockfile]' : ''),
+        file: relPath,
+        line: dep.line,
+        snippet: dep.declaredRange ? `"${dep.name}": "${dep.declaredRange}"` : `${dep.name}@${dep.version}`,
+        ...(isReachable === undefined ? {} : { isReachable }),
+        description: `${match.description} (Affected: ${match.affectedVersion}). ${origin}.` +
+          (isReachable ? ' Package is imported in application code.' : ''),
+        remediation: `${match.remediation} (Current: ${dep.version})`
+      });
     }
   }
 
   return findings;
-}
-
-function findLineNumber(content, text) {
-  const idx = content.split('\n').findIndex(l => l.includes(text));
-  return idx === -1 ? 1 : idx + 1;
 }
 
 const candidateFilesCache = new WeakMap();

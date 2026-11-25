@@ -100,6 +100,33 @@ export function redactSecret(secret) {
   return `${prefix}${'*'.repeat(Math.max(6, secret.length - 7))}${suffix}`;
 }
 
+const PRIVATE_KEY_MARKER = /-----BEGIN\s+(?:[A-Z]+\s+)?PRIVATE\s+KEY-----/;
+
+/** Masks only the password of a connection string so the host stays readable. */
+function maskConnectionString(value) {
+  return value
+    .replace(/(:\/\/[^:@\s/]+:)[^@\s]+(@)/, '$1***$2')
+    .replace(/((?:Password|Pwd)\s*=\s*)[^;"'\s]+/gi, '$1***');
+}
+
+/**
+ * Builds the snippet for a source line: every secret found on that line is
+ * masked (not just the one a finding is about), and nothing after a private
+ * key header is printed.
+ */
+function redactLine(lineText, secretsOnLine) {
+  let out = lineText;
+  const ordered = [...secretsOnLine].sort((a, b) => b.value.length - a.value.length);
+  for (const { value, type } of ordered) {
+    if (type === 'private_key' || !value) continue;
+    const masked = type === 'db_uri' ? maskConnectionString(value) : redactSecret(value);
+    out = out.split(value).join(masked);
+  }
+  const key = out.match(PRIVATE_KEY_MARKER);
+  if (key) out = out.slice(0, key.index + key[0].length) + ' [key material redacted]';
+  return out.trim().slice(0, 300);
+}
+
 function compileAllowlist(patterns) {
   if (!Array.isArray(patterns)) return [];
   const compiled = [];
@@ -123,13 +150,8 @@ export function scanSecrets(file, options = {}) {
   const content = readText(file);
   if (content === null) return findings;
 
-  // Skip files that usually have placeholders or tests
-  if (isTestPath(file.relative) || file.relative.includes('.example')) {
-    // If it's a test file, only report if it's not a generic dummy value
-    if (content.includes('dummy') || content.includes('placeholder') || content.includes('fake')) {
-      return findings;
-    }
-  }
+  // In test and example files, a line that says it is a placeholder is believed; the rest is scanned
+  const lenientFile = isTestPath(file.relative) || file.relative.includes('.example');
 
   const lines = getLines(file);
 
@@ -164,8 +186,9 @@ export function scanSecrets(file, options = {}) {
       if (allowlist.some(rx => rx.test(secretValue) || rx.test(lineText))) {
         continue;
       }
-
-      const redactedSnippet = lineText.replace(secretValue, redactSecret(secretValue)).trim();
+      if (lenientFile && /dummy|placeholder|fake|example|sample/i.test(lineText)) {
+        continue;
+      }
 
       const finding = {
         ruleId: rule.id,
@@ -174,7 +197,6 @@ export function scanSecrets(file, options = {}) {
         file: file.relative.replace(/\\/g, '/'),
         line: lineNo,
         secretType: rule.type,
-        snippet: redactedSnippet,
         description: `Found raw ${rule.name}. Hardcoded credentials can be exploited for unauthorized access or automated scraping.`,
         remediation: `Immediately revoke this credential, rotate it, and store it in environment variables or a Secret Manager (e.g. AWS Secrets Manager, Doppler).`
       };
@@ -183,6 +205,16 @@ export function scanSecrets(file, options = {}) {
       Object.defineProperty(finding, 'rawSecret', { value: secretValue, enumerable: false });
       findings.push(finding);
     }
+  }
+
+  // Snippets are built once every secret on each line is known
+  const byLine = new Map();
+  for (const f of findings) {
+    if (!byLine.has(f.line)) byLine.set(f.line, []);
+    byLine.get(f.line).push({ value: f.rawSecret, type: f.secretType });
+  }
+  for (const f of findings) {
+    f.snippet = redactLine(lines[f.line - 1] || '', byLine.get(f.line));
   }
 
   return findings;

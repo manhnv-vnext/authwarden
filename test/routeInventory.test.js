@@ -227,7 +227,7 @@ test('scan result exposes a route inventory with counts', async () => {
     { method: order.method, file: order.file, line: order.line, framework: order.framework, auth: order.auth },
     { method: 'POST', file: 'src/app.js', line: 2, framework: 'Express', auth: 'protected' }
   );
-  assert.deepEqual(result.stats.routes, { total: 2, protected: 1, unprotected: 1 });
+  assert.deepEqual(result.stats.routes, { total: 2, protected: 1, unprotected: 1, unknown: 0 });
 });
 
 test('routes command prints the inventory as JSON', async () => {

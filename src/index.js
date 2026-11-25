@@ -12,6 +12,8 @@ import { scanBusinessLogic } from './engines/businessLogicScanner.js';
 import { scanApiSpecs } from './engines/apiSpecScanner.js';
 import { verifySecret } from './verifier/secretVerifier.js';
 import { enrichFinding } from './rules/catalog.js';
+import { loadCustomRules, runCustomRules } from './utils/customRules.js';
+import { getLines, getCodeLines } from './utils/fileContext.js';
 import { buildProjectAuthContext } from './engines/authContext.js';
 import { scanOsv } from './engines/osvScanner.js';
 import { DEPENDENCY_FILES } from './engines/dependencies.js';
@@ -124,7 +126,7 @@ export async function runScan(targetPath = '.', options = {}) {
   const allFindings = [];
 
   // Upstream auth (Next.js middleware, ASP.NET fallback policy, Spring filter chain) + route inventory
-  const authCtx = { project: buildProjectAuthContext(files), routes: [] };
+  const authCtx = { project: buildProjectAuthContext(files, options), routes: [] };
 
   for (const file of files) {
     // 1. API & Auth Scanner
@@ -187,82 +189,53 @@ export async function runScan(targetPath = '.', options = {}) {
     }
   }
 
-  // 10. Custom Organization Rules Loader (from rules/*.json or options.rulesDir)
-  const rulesDir = path.resolve(rootDir, options.rulesDir || 'rules');
-  if (fs.existsSync(rulesDir)) {
-    try {
-      const ruleFiles = fs.readdirSync(rulesDir).filter(f => f.endsWith('.json'));
-      for (const rf of ruleFiles) {
-        const raw = fs.readFileSync(path.join(rulesDir, rf), 'utf8');
-        const customRules = JSON.parse(raw);
-        if (Array.isArray(customRules)) {
-          for (const cr of customRules) {
-            if (!cr.pattern || !cr.id) continue;
-            const rx = new RegExp(cr.pattern, 'i');
-            for (const file of files) {
-              if (cr.languages && !cr.languages.includes(file.ext)) continue;
-              try {
-                const fContent = fs.readFileSync(file.path, 'utf8');
-                const fLines = fContent.split('\n');
-                fLines.forEach((l, idx) => {
-                  if (rx.test(l)) {
-                    allFindings.push({
-                      ruleId: cr.id,
-                      severity: cr.severity || 'HIGH',
-                      title: cr.name || cr.id,
-                      file: file.relative.replace(/\\/g, '/'),
-                      line: idx + 1,
-                      snippet: l.trim(),
-                      description: cr.description || 'Matched custom organization security rule.',
-                      remediation: cr.remediation || 'Inspect code according to internal security guidelines.'
-                    });
-                  }
-                });
-              } catch {
-                // skip
-              }
-            }
-          }
-        }
-      }
-    } catch {
-      // skip invalid custom rules
-    }
+  // 10. Custom organisation rules (rules/*.json or options.rulesDir).
+  // They live in the scanned repository, so they are validated, run in a worker with a
+  // time limit, and skipped entirely in untrusted mode unless a rules directory was given.
+  const warnings = [];
+  if (!options.untrusted || options.rulesDir) {
+    const rulesDir = path.resolve(rootDir, options.rulesDir || 'rules');
+    const loaded = loadCustomRules(rulesDir);
+    warnings.push(...loaded.warnings);
+    const custom = await runCustomRules(loaded.rules, files, options.customRuleTimeoutMs);
+    warnings.push(...custom.warnings);
+    allFindings.push(...custom.findings);
   }
 
   // 11. Filter out findings by ignoreRules, ignorePaths, or inline comments
   const ignoredRules = options.ignoreRules && Array.isArray(options.ignoreRules) ? new Set(options.ignoreRules) : null;
   const ignoredPaths = options.ignorePaths && Array.isArray(options.ignorePaths) ? options.ignorePaths.map(p => p.replace(/\\/g, '/')) : null;
+  const suppressed = { config: 0, inline: 0 };
+  const filesByRel = new Map(files.map(f => [f.relative.replace(/\\/g, '/'), f]));
 
-  const fileLinesCache = new Map();
+  // A marker only counts inside a comment: it must disappear from the comment-stripped view.
+  // File types without comment masking fall back to "after a comment opener on the line".
+  const markerInComment = (file, lineIdx, marker) => {
+    const raw = getLines(file)[lineIdx] || '';
+    if (!raw.includes(marker)) return false;
+    const code = getCodeLines(file)[lineIdx] || '';
+    if (code !== raw) return !code.includes(marker);
+    return new RegExp('(?:#|//|<!--|--)[^\\n]*' + marker).test(raw);
+  };
+
   const activeFindings = allFindings.filter(f => {
     if (ignoredRules && ignoredRules.has(f.ruleId)) {
+      suppressed.config++;
       return false;
     }
     if (ignoredPaths && ignoredPaths.some(p => matchesPathPattern(f.file, p))) {
+      suppressed.config++;
       return false;
     }
+    if (options.untrusted) return true; // inline markers are written by the code under review
 
-    try {
-      const fullPath = path.resolve(rootDir, f.file);
-      if (!fs.existsSync(fullPath)) return true;
-      let lines = fileLinesCache.get(fullPath);
-      if (!lines) {
-        lines = fs.readFileSync(fullPath, 'utf8').split('\n');
-        fileLinesCache.set(fullPath, lines);
-      }
-      const lineIdx = (f.line || 1) - 1;
-      const currentLine = lines[lineIdx] || '';
-      const prevLine = lineIdx > 0 ? (lines[lineIdx - 1] || '') : '';
-
-      if (currentLine.includes('authwarden-disable-line') || currentLine.includes('authwarden-ignore')) {
-        return false;
-      }
-      if (prevLine.includes('authwarden-disable-next-line')) {
-        return false;
-      }
-    } catch {
-      // keep finding on read error
+    const file = filesByRel.get(f.file);
+    if (!file) return true;
+    const lineIdx = (f.line || 1) - 1;
+    if (markerInComment(file, lineIdx, 'authwarden-disable-line') || markerInComment(file, lineIdx, 'authwarden-ignore') ||
+        (lineIdx > 0 && markerInComment(file, lineIdx - 1, 'authwarden-disable-next-line'))) {
+      suppressed.inline++;
+      return false;
     }
     return true;
   });
@@ -368,6 +341,7 @@ export async function runScan(targetPath = '.', options = {}) {
 
   const routes = authCtx.routes;
   const protectedRoutes = routes.filter(r => r.auth === 'protected').length;
+  const unknownRoutes = routes.filter(r => r.auth === 'unknown').length;
 
   const durationMs = Date.now() - startTime;
 
@@ -379,7 +353,9 @@ export async function runScan(targetPath = '.', options = {}) {
       filesScanned: files.length,
       frameworks: Array.from(frameworks),
       coverageScorecard,
-      routes: { total: routes.length, protected: protectedRoutes, unprotected: routes.length - protectedRoutes },
+      suppressed,
+      warnings,
+      routes: { total: routes.length, protected: protectedRoutes, unprotected: routes.length - protectedRoutes - unknownRoutes, unknown: unknownRoutes },
       ...(osvStatus ? { osv: osvStatus } : {}),
       durationMs
     }

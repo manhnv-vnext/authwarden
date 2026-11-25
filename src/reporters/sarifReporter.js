@@ -84,6 +84,11 @@ export function generateSarif(scanResult) {
   }, null, 2);
 }
 
+// Report text comes from scanned files, so nothing may break out of its Markdown context
+const mdText = (v) => String(v ?? '').replace(/[\r\n]+/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/([\\`*_\[\]()|!#])/g, '\\$1');
+const mdCode = (v) => '`' + String(v ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'").replace(/\|/g, '\\|').replace(/</g, '‹').replace(/>/g, '›').slice(0, 300) + '`';
+
 export function generateMarkdown(scanResult) {
   const { findings, stats } = scanResult;
 
@@ -91,7 +96,7 @@ export function generateMarkdown(scanResult) {
     if (!stats.coverageScorecard || stats.coverageScorecard.length === 0) return '';
     let section = `\n#### 📊 Coverage Transparency\n`;
     if (stats.frameworks?.length) {
-      section += `**Detected Stack:** ${stats.frameworks.map(f => `\`${f}\``).join(', ')}\n\n`;
+      section += `**Detected Stack:** ${stats.frameworks.map(f => mdCode(f)).join(', ')}\n\n`;
     }
     section += `| Target / Language | Status | Scope |\n|:---|:---:|:---|\n`;
     for (const item of stats.coverageScorecard) {
@@ -101,8 +106,18 @@ export function generateMarkdown(scanResult) {
     return section;
   };
 
+  const formatNotes = () => {
+    const notes = [];
+    const sup = stats.suppressed;
+    if (sup && (sup.config || sup.inline)) {
+      notes.push(`${sup.config || 0} finding(s) suppressed by configuration and ${sup.inline || 0} by inline comments.`);
+    }
+    for (const w of stats.warnings || []) notes.push(mdText(w));
+    return notes.length ? `\n> ℹ️ ${notes.join(' ')}\n` : '';
+  };
+
   if (findings.length === 0) {
-    return `### 🛡️ AuthWarden Security Scan: PASSED ✅\n\nNo authorization flaws, exposed secrets, or configuration risks detected across **${stats.filesScanned}** files.\n${formatScorecard()}`;
+    return `### 🛡️ AuthWarden Security Scan: PASSED ✅\n\nNo authorization flaws, exposed secrets, or configuration risks detected across **${stats.filesScanned}** files.\n${formatNotes()}${formatScorecard()}`;
   }
 
   let md = `### 🛡️ AuthWarden Security Scan: ${findings.length} Finding(s) Detected ⚠️\n\n`;
@@ -111,18 +126,19 @@ export function generateMarkdown(scanResult) {
 
   findings.forEach(f => {
     const icon = f.severity === 'CRITICAL' ? '🔴' : f.severity === 'HIGH' ? '🟠' : '🟡';
-    md += `| ${icon} **${f.severity}** | \`${f.ruleId}\` | ${f.title} | \`${f.file}\` | ${f.line} |\n`;
+    md += `| ${icon} **${mdText(f.severity)}** | ${mdCode(f.ruleId)} | ${mdText(f.title)} | ${mdCode(f.file)} | ${Number(f.line) || 1} |\n`;
   });
 
+  md += formatNotes();
   md += formatScorecard();
 
   md += `\n<details><summary><b>Detailed Remediation Advice</b></summary>\n\n`;
   findings.forEach(f => {
-    md += `#### [${f.ruleId}] ${f.title}\n`;
-    md += `- **Location:** \`${f.file}:${f.line}\`\n`;
-    if (f.snippet) md += `- **Snippet:** \`${f.snippet}\`\n`;
-    if (f.description) md += `- **Description:** ${f.description}\n`;
-    if (f.remediation) md += `- **Recommended Fix:** ${f.remediation}\n\n`;
+    md += `#### [${mdText(f.ruleId)}] ${mdText(f.title)}\n`;
+    md += `- **Location:** ${mdCode(f.file + ':' + (Number(f.line) || 1))}\n`;
+    if (f.snippet) md += `- **Snippet:** ${mdCode(f.snippet)}\n`;
+    if (f.description) md += `- **Description:** ${mdText(f.description)}\n`;
+    if (f.remediation) md += `- **Recommended Fix:** ${mdText(f.remediation)}\n\n`;
   });
   md += `</details>\n`;
 

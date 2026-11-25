@@ -28,7 +28,14 @@ export function printTerminalReport(scanResult) {
       : ` ${colors.yellow('▲')} OSV.dev lookup failed (${stats.osv.message}); results below use the offline database only`);
   }
   if (stats.routes?.total) {
-    console.log(` ${colors.green('✔')} Routes: ${colors.bold(stats.routes.total)} discovered, ${colors.bold(stats.routes.unprotected)} without detected auth ${colors.gray('(run "authwarden routes" for the inventory)')}`);
+    console.log(` ${colors.green('✔')} Routes: ${colors.bold(stats.routes.total)} discovered, ${colors.bold(stats.routes.unprotected)} without detected auth, ${colors.bold(stats.routes.unknown || 0)} unknown ${colors.gray('(run "authwarden routes" for the inventory)')}`);
+  }
+
+  if (stats.suppressed && (stats.suppressed.config || stats.suppressed.inline)) {
+    console.log(` ${colors.cyan('ℹ')} Suppressed: ${colors.bold(stats.suppressed.config || 0)} by configuration, ${colors.bold(stats.suppressed.inline || 0)} by inline comments`);
+  }
+  for (const warning of stats.warnings || []) {
+    console.log(` ${colors.yellow('▲')} ${warning}`);
   }
 
   // Coverage Transparency Scorecard

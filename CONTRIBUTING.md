@@ -20,7 +20,7 @@ Adding a new rule is straightforward:
    - `src/engines/cveScanner.js` and `src/engines/osvScanner.js`: Offline CVE list and opt-in OSV.dev lookup.
    - `src/engines/authContext.js`: Project-wide auth guards (middleware, fallback policies).
 
-   Read files through `src/utils/fileContext.js` (`readText`, `getLines`, `getCodeLines`) so content is loaded once per scan and comments are stripped consistently.
+   Read files through `src/utils/fileContext.js` so content is loaded once per scan. Three aligned views are available: raw (`readText`), `getCode` (comments removed) and `getSkeleton` (comments and the contents of string literals removed). Decide whether auth is present on the skeleton only, so a word in a string or comment can never make a route look protected.
 
 2. **Add a rule entry:**
    Each finding follows this clean format:

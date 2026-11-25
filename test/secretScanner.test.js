@@ -79,8 +79,7 @@ test('calculates Shannon entropy and detects high-entropy generic secret (SEC-01
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-sec10-'));
   const envFile = path.join(tmpDir, 'config.js');
-  // dummy placeholder
-  const code = 'const api_secret = "8f3a9b2c1d4e5f6a7b8c9d0e1f2a3b4c";\n';
+  const code = 'const api_secret = "8f3a9b2c1d4e5f6a7b8c9d0e1f2a3b4c";\n'; // dummy placeholder value, not a credential
   fs.writeFileSync(envFile, code);
 
   const mockFile = {

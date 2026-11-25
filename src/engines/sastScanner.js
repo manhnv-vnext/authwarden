@@ -14,7 +14,7 @@ export const SAST_RULES = [
     cwe: 'CWE-89',
     owasp: 'A03:2021-Injection',
     languages: ['.js', '.jsx', '.ts', '.tsx', '.py', '.php', '.go', '.java', '.cs'],
-    regex: /\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^;]*?(?:['"`]\s*\+|\+\s*['"`]|\$\{|\.concat\s*\(|%s['"]\s*%).*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|form|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b)|(?:\bFromSqlRaw|\bExecuteSqlRawAsync|\bExecuteSqlInterpolatedAsync)\s*\(\s*\$["']|new\s+SqlCommand\s*\([^)]*?\+/i,
+    regex: /(?:\bSELECT\b[^;]*?\bFROM\b|\bINSERT\s+INTO\b|\bUPDATE\b[^;]*?\bSET\b|\bDELETE\s+FROM\b)[^;]*?(?:['"`]\s*\+|\+\s*['"`]|\$\{|\.concat\s*\(|%s['"]\s*%).*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|form|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b)|(?:\bFromSqlRaw|\bExecuteSqlRawAsync|\bExecuteSqlInterpolatedAsync)\s*\(\s*\$["']|new\s+SqlCommand\s*\([^)]*?\+/i,
     description: 'Dynamic SQL query constructed directly with untrusted user input without parameterized placeholders.',
     remediation: 'Use parameterized queries, prepared statements (e.g. $1, $2 or ?), or an ORM (Prisma, TypeORM, SQLAlchemy, EF Core).'
   },
@@ -53,7 +53,7 @@ export const SAST_RULES = [
     cwe: 'CWE-918',
     owasp: 'A10:2021-Server-Side Request Forgery',
     languages: ['.js', '.ts', '.py', '.php', '.go', '.java', '.cs'],
-    regex: /(?:\bfetch|\baxios\.(?:get|post)|\bhttps?\.get|\burllib\.request\.urlopen|\brequests\.(?:get|post)|(?:\b_?httpClient|\bclient|\bhttp)\.(?:GetAsync|PostAsync|GetStringAsync)|\bWebRequest\.Create|\bWebClient\.(?:DownloadString|DownloadData))\s*\([^;]*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b|\b\w*(?:url|uri|target|endpoint|path)\b)/i,
+    regex: /(?:\bfetch|\baxios\.(?:get|post)|\bhttps?\.get|\burllib\.request\.urlopen|\brequests\.(?:get|post)|(?:\b_?httpClient|\bclient|\bhttp)\.(?:GetAsync|PostAsync|GetStringAsync)|\bWebRequest\.Create|\bWebClient\.(?:DownloadString|DownloadData))\s*\([^;]*?(?:\breq\.(?:query|body|params)\b|\brequest\.(?:args|GET|POST)\b|\$_(?:GET|POST|REQUEST)\b|\b(?:input|user|client|request|req|remote|target|callback|webhook|redirect|external|dest(?:ination)?)\w*(?:url|uri|host|endpoint)\b)/i,
     description: 'Server makes outbound HTTP requests to user-supplied URLs without restricting internal network ranges (127.0.0.1, 169.254.169.254 cloud metadata).',
     remediation: 'Use a strict URL allowlist, block private/loopback IP address ranges, and disable HTTP redirects.'
   },

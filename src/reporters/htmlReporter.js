@@ -13,6 +13,9 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+const SEVERITIES = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']);
+const safeSeverity = (s) => (SEVERITIES.has(s) ? s : 'MEDIUM');
+
 export function generateHtml(scanResult) {
   const { findings, stats, targetDir } = scanResult;
 
@@ -27,7 +30,7 @@ export function generateHtml(scanResult) {
     id: idx,
     ruleId: f.ruleId,
     title: f.title,
-    severity: f.severity,
+    severity: safeSeverity(f.severity),
     file: f.file,
     line: f.line,
     snippet: f.snippet || '',

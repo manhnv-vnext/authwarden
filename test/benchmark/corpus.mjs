@@ -61,6 +61,39 @@ export const CASES = [
     'src/main/java/app/SecurityConfig.java': L('public class SecurityConfig {', '  SecurityFilterChain chain(HttpSecurity http) throws Exception {', '    http.authorizeHttpRequests(a -> a.anyRequest().authenticated());', '    return http.build();', '  }', '}'),
     'src/main/java/app/AdminController.java': L('@RestController', '@RequestMapping("/admin")', 'public class AdminController {', '    @GetMapping("/users")', '    public List<User> users() {', '        return repo.findAll();', '    }', '}') } },
 
+  // Cases taken from an independent review and from scanning real projects (v1.9.0).
+  // The "vulnerable" ones are routes an earlier version wrongly reported as protected.
+  { id: 'auth001-word-in-string-arg', rule: 'AUTH-001', kind: 'vulnerable', note: 'The word auth only appears inside a string', files: {
+    'src/app.js': L("app.use(cors({ origin: 'https://auth.example.com' }));", "app.delete('/admin/users/:id', removeUser);") } },
+  { id: 'auth001-csrf-is-not-auth', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'src/app.js': L("app.post('/admin/export', csrfProtection, exportAll);") } },
+  { id: 'auth001-handler-named-session', rule: 'AUTH-001', kind: 'vulnerable', note: 'Seen in OWASP NodeGoat', files: {
+    'src/routes.js': L("app.get('/admin/sessions', sessionHandler.listAll);") } },
+  { id: 'auth001-regex-literal-before-route', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'src/server.js': L("const base = process.env.BASE.replace(/\\/*$/, '');", "app.delete('/admin/users/:id', removeUser);") } },
+  { id: 'auth001-commented-guard', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'src/server.js': L('// app.use(requireAuth);', "app.delete('/admin/users/:id', removeUser);") } },
+  { id: 'auth001-fastapi-word-in-path', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'main.py': L('app = FastAPI()', '', '@app.delete("/admin/tokens/{token_id}")', 'def revoke(token_id: int, db = Depends(get_db)):', '    return db.delete(token_id)') } },
+  { id: 'auth001-next-author-variable', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'app/api/admin/posts/route.ts': L('export async function DELETE(req) {', '  const author = await req.json();', '  await db.post.deleteMany({ where: { author } });', '  return Response.json({ ok: true });', '}') } },
+  { id: 'auth001-next-const-handler', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'app/api/admin/wipe/route.ts': L('export const POST = async (req) => {', '  return wipe();', '};') } },
+  { id: 'auth001-aspnet-commented-fallback', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'Program.cs': L('// o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();', 'app.MapDelete("/admin/users/{id}", RemoveUser);') } },
+  { id: 'auth001-spring-permit-all', rule: 'AUTH-001', kind: 'vulnerable', files: {
+    'src/main/java/app/SecurityConfig.java': L('public class SecurityConfig {', '  SecurityFilterChain chain(HttpSecurity http) throws Exception {', '    http.authorizeHttpRequests(a -> a.requestMatchers("/admin/**").permitAll().anyRequest().authenticated());', '    return http.build();', '  }', '}'),
+    'src/main/java/app/AdminController.java': L('@RestController', '@RequestMapping("/admin")', 'public class AdminController {', '    @DeleteMapping("/users/{id}")', '    public void remove(@PathVariable Long id) {', '    }', '}') } },
+
+  { id: 'auth001-express-is-logged-in', rule: 'AUTH-001', kind: 'safe', note: 'Seen in OWASP NodeGoat', files: {
+    'src/routes.js': L("app.get('/admin/stats', isLoggedIn, statsHandler.show);") } },
+  { id: 'auth001-express-deny-all', rule: 'AUTH-001', kind: 'safe', note: 'Seen in OWASP Juice Shop', files: {
+    'server.ts': L("app.delete('/admin/products/:id', security.denyAll())") } },
+  { id: 'auth001-fastapi-annotated-dependency', rule: 'AUTH-001', kind: 'safe', note: 'Seen in the FastAPI full-stack template', files: {
+    'api/items.py': L('router = APIRouter(prefix="/admin")', '', '@router.get("/items")', 'def read_items(session: SessionDep, current_user: CurrentUser) -> Any:', '    return []') } },
+  { id: 'auth001-fastapi-decorator-dependency', rule: 'AUTH-001', kind: 'safe', note: 'Seen in the FastAPI full-stack template', files: {
+    'api/users.py': L('router = APIRouter(prefix="/admin")', '', '@router.get(', '    "/users",', '    dependencies=[Depends(get_current_active_superuser)],', ')', 'def read_users(session: SessionDep) -> Any:', '    return []') } },
+
   // ───────────── AUTH-002: state-changing route without authentication ─────────────
   { id: 'auth002-next-post', rule: 'AUTH-002', kind: 'vulnerable', files: {
     'app/api/orders/route.ts': NEXT_POST(['  const body = await req.json();', '  await db.order.create({ data: body });']) } },
@@ -182,6 +215,19 @@ export const CASES = [
     'package.json': L('{', '  "name": "demo",', '  "scripts": { "postinstall": "husky install" }', '}') } },
   { id: 'iac004-docker-socket', rule: 'IAC-004', kind: 'vulnerable', files: {
     'docker-compose.yml': L('services:', '  agent:', '    image: agent:1.0', '    volumes:', '      - /var/run/docker.sock:/var/run/docker.sock') } },
+  // Noise found on real, well-maintained projects (v1.9.0)
+  { id: 'auth002-aspnet-extension-authorization', rule: 'AUTH-002', kind: 'safe', note: 'Seen in dotnet/eShop: auth is chained where the endpoints are mapped', files: {
+    'Ordering/Ordering.csproj': L('<Project Sdk="Microsoft.NET.Sdk.Web"></Project>'),
+    'Ordering/Program.cs': L('orders.MapOrdersApiV1()', '      .RequireAuthorization();'),
+    'Ordering/Apis/OrdersApi.cs': L('public static class OrdersApi', '{', '    public static RouteGroupBuilder MapOrdersApiV1(this IEndpointRouteBuilder app)', '    {', '        var api = app.MapGroup("api/orders");', '        api.MapPost("/draft", CreateOrderDraftAsync);', '        return api;', '    }', '}') } },
+  { id: 'auth003-java-repository-declaration', rule: 'AUTH-003', kind: 'safe', note: 'Seen in spring-petclinic: a method declaration, not a query', files: {
+    'src/main/java/app/OwnerRepository.java': L('public interface OwnerRepository extends Repository<Owner, Integer> {', '    Optional<Owner> findById(Integer id);', '}') } },
+  { id: 'auth003-own-identity-lookup', rule: 'AUTH-003', kind: 'safe', note: 'Seen in OWASP Juice Shop: keyed by the caller', files: {
+    'routes/password.ts': L('export async function changePassword(req, res) {', '  const user = await UserModel.findByPk(loggedInUser.data.id)', '  res.json(user)', '}') } },
+  { id: 'sast001-word-delete-in-message', rule: 'SAST-001', kind: 'safe', note: 'Seen in expressjs/express examples', files: {
+    'src/pets.js': L("res.send('delete ' + escapeHtml(req.params.uid) + ' pet ' + escapeHtml(req.params.pid));") } },
+  { id: 'sast004-generic-uri-variable', rule: 'SAST-004', kind: 'safe', note: 'Seen in dotnet/eShop', files: {
+    'Services/RequestProvider.cs': L('using var response = await httpClient.GetAsync(uri).ConfigureAwait(false);') } },
   { id: 'iac004-data-volume', rule: 'IAC-004', kind: 'safe', files: {
     'docker-compose.yml': L('services:', '  agent:', '    image: agent:1.0', '    volumes:', '      - ./data:/data') } }
 ];

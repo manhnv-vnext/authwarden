@@ -18,6 +18,10 @@ inputs:
     description: 'Whether to safely verify detected secrets against live APIs'
     required: false
     default: 'false'
+  untrusted:
+    description: 'Treat the scanned repository as input only: ignore its config, rules, inline suppressions and .gitignore. Use for pull requests from forks.'
+    required: false
+    default: 'false'
   online:
     description: 'Look up dependency versions on OSV.dev (sends package names and versions only)'
     required: false

@@ -5,12 +5,17 @@ import path from 'path';
  * Loads project-level AuthWarden configuration file.
  * Searches for .authwardenrc.json or authwarden.config.json.
  */
+/** A config file must be a JSON object; anything else (null, array, string) is treated as empty. */
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
 export function loadConfig(targetDir = '.') {
   const resolved = path.resolve(targetDir);
   if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
     try {
       const raw = fs.readFileSync(resolved, 'utf8');
-      const parsed = JSON.parse(raw);
+      const parsed = asObject(JSON.parse(raw));
       return {
         config: parsed,
         configPath: resolved
@@ -37,7 +42,7 @@ export function loadConfig(targetDir = '.') {
       if (fs.existsSync(fullPath)) {
         try {
           const raw = fs.readFileSync(fullPath, 'utf8');
-          const parsed = JSON.parse(raw);
+          const parsed = asObject(JSON.parse(raw));
           return {
             config: parsed,
             configPath: fullPath

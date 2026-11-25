@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.9.0
+
+This release follows an independent review of 1.8.0 and a run against eight public projects. Most of it makes the tool safer to rely on rather than adding features.
+
+### Security
+- A config file inside the scanned directory can no longer set `output` (arbitrary file write), `watch` (hang) or `verify` / `online` (network access). These are accepted only on the command line or through `--config`.
+- New `--untrusted` mode for pull requests from forks: ignores the repository's config, custom rules, inline suppressions and `.gitignore`.
+- Custom rules run in a worker thread with a time limit, so a catastrophic regex cannot hang the scan; rule ids and severities are validated, and one invalid rule no longer drops the others.
+- HTML report: a custom rule's `severity` could inject markup. Markdown report and `$GITHUB_STEP_SUMMARY`: snippet, file name and title could break out of their context. Both are escaped now.
+- Secret snippets leaked in JSON, Markdown and baseline files: only the first occurrence of one secret per line was masked, private key bodies on one line were printed, and short connection-string passwords stayed visible. Every secret on a line is masked now.
+- Symbolic links are no longer followed (they could pull files from outside the scanned tree into the report).
+
+### Fixed: routes wrongly reported as protected
+- Auth detection matched loose substrings (`auth`, `token`, `session`, `protect`, `security`) in raw text, so a CORS origin string, `csrfProtection`, a variable named `author`, a word in the route path or a TODO comment made a route "protected". It now requires an auth identifier in real code: comments and string contents are removed first.
+- The comment stripper treated `/*` inside a regex literal as a block comment, hiding the rest of the file, and a backtick in a regex literal as a template string. Source masking was rewritten to understand regex literals, template literals, Python docstrings and C# verbatim strings.
+- Next.js: `export function GET` and `export const POST = ...` handlers were not discovered; a handler's auth check no longer leaks into the next handler; a middleware that only mentions auth in a comment no longer protects routes.
+- FastAPI: only the decorator arguments and the function parameters are examined, and annotated dependencies (`current_user: CurrentUser`) are recognised.
+- ASP.NET Core: commented-out fallback policies are ignored; a policy in one project no longer protects another; `.AllowAnonymous()` after a lambda with statements is honoured; each controller class in a file gets its own attributes and route; endpoints mapped by an extension method chained with `.RequireAuthorization()` are recognised.
+- Spring: `permitAll()` matchers are excluded from the global `authenticated()` rule; mappings with named attributes and package-private methods are discovered.
+- Express: a router mounted both publicly and behind auth is no longer treated as protected; Express route detection no longer runs on Python files.
+
+### Fixed: other
+- `--staged` scanned nothing when the target was a subdirectory, scanned the working tree instead of the staged content, and skipped non-ASCII file names. It now scans a snapshot of the git index.
+- Offline SCA missed: single-line `require` in `go.mod`, extras and spaces in `requirements.txt`, Maven versions set through properties, NuGet `Version` on a following line or as a child element, pnpm v5 keys, yarn aliases and `composer.lock`. It over-reported `package.json` ranges when a lockfile resolved a fixed version, and truncated Go pseudo-versions. Manifest parsing is now shared with the OSV.dev lookup.
+- `SAST-001` fired on the word "delete" next to request input; it now requires SQL statement shape. `SAST-004` fired on any variable named `url` or `uri`; it now requires request input or a name that says the value comes from outside.
+- `AUTH-003` fired on repository method declarations.
+- A `.gitignore` line `*` disabled the scan. Inline suppression matched the marker anywhere on the line, including inside a string; it now has to be in a comment.
+- In test and example files, the words "fake", "dummy" or "placeholder" anywhere in the file suppressed every secret in it; now only the line that says so is skipped.
+- CLI: unknown `--format` / `--fail-on` values and a missing `--config` file are errors (exit 2) instead of silent fallbacks; a config file containing `null` no longer crashes; `init-hook` no longer overwrites an existing hook and the hook runs this tool from its GitHub source.
+
+### Added
+- Route state `unknown` (middleware present but not recognised as auth) and the `authIdentifiers` config option to name project-specific auth middleware. Findings on such routes carry `confidence: LOW`.
+- Suppression counts (`stats.suppressed`) and scan warnings (`stats.warnings`) in every report.
+- 19 corpus cases taken from the review and from real projects (89 in total).
+
+### Changed (may affect existing users)
+- Expect more `AUTH-001` findings where an earlier version accepted a loosely matching word as auth, and fewer where auth is declared one level up.
+- `routes[].auth` can be `unknown`; `stats.routes` gains an `unknown` count.
+- Baseline fingerprints of `SEC-007` and `SEC-008` findings change because their snippets are masked differently; regenerate baselines that contain them.
+- README no longer claims Django or Go route support, which never existed.
+
 ## 1.8.0
 
 ### Fixed

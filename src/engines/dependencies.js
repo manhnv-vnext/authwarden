@@ -7,6 +7,7 @@ import { readText, getLines } from '../utils/fileContext.js';
  */
 
 const NPM_LOCKFILES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']);
+const LOCKFILES = new Set([...NPM_LOCKFILES, 'packages.lock.json', 'composer.lock', 'poetry.lock']);
 
 /** Manifest and lockfile names that carry dependency versions. */
 export const DEPENDENCY_FILES = new Set([
@@ -34,7 +35,13 @@ export function extractDependencies(file, allFiles = []) {
   const add = (ecosystem, pkg, version, extra = {}) => {
     const v = String(version || '').trim().replace(/^v/, '');
     if (!pkg || !EXACT_VERSION.test(v)) return;
-    deps.push({ ecosystem, name: pkg, version: v, line: lineContaining(file, pkg), ...extra });
+    deps.push({ ecosystem, name: pkg, version: v, line: lineContaining(file, pkg), locked: LOCKFILES.has(name), ...extra });
+  };
+  // "^1.2.3" / "~1.2" / ">=1.2.3 <2" -> lowest admissible version; an upper bound alone says nothing
+  const lowerBound = (spec) => {
+    const s = String(spec).trim();
+    if (/^[<*xX]|\|\||^latest$|^[a-z]+:/i.test(s)) return null;
+    return s.replace(/^[\^~>=\s]+/, '').split(/[\s,]/)[0];
   };
 
   try {
@@ -56,13 +63,23 @@ export function extractDependencies(file, allFiles = []) {
         const pkg = JSON.parse(content);
         for (const [dep, spec] of Object.entries({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })) {
           if (typeof spec !== 'string') continue;
-          add('npm', dep, spec.replace(/^[\^~>=<\s]+/, ''), { declaredRange: spec });
+          add('npm', dep, lowerBound(spec), { declaredRange: spec });
         }
       }
     } else if (name === 'packages.lock.json') {
       const lock = JSON.parse(content);
       for (const group of Object.values(lock.dependencies || {})) {
         for (const [dep, info] of Object.entries(group || {})) add('NuGet', dep, info?.resolved || info?.version);
+      }
+    } else if (name === 'composer.json') {
+      const dir = path.dirname(file.path);
+      const hasLock = allFiles.some(f => f.name.toLowerCase() === 'composer.lock' && path.dirname(f.path) === dir);
+      if (!hasLock) {
+        const comp = JSON.parse(content);
+        for (const [dep, spec] of Object.entries({ ...(comp.require || {}), ...(comp['require-dev'] || {}) })) {
+          if (typeof spec !== 'string' || !dep.includes('/')) continue;
+          add('Packagist', dep, lowerBound(spec), { declaredRange: spec });
+        }
       }
     } else if (name === 'composer.lock') {
       const lock = JSON.parse(content);
@@ -76,6 +93,8 @@ export function extractDependencies(file, allFiles = []) {
           const spec = line.split(',')[0].trim().replace(/:$/, '').replace(/^["']|["']$/g, '');
           const at = spec.lastIndexOf('@');
           current = at > 0 && !/@(?:workspace|patch|file|link|portal):/.test(spec) ? spec.slice(0, at) : null;
+          const alias = spec.match(/@npm:((?:@[^/@]+\/)?[^/@]+)@/);
+          if (current && alias) current = alias[1];
         } else if (current) {
           const m = line.match(/^\s+version:?\s+"?([^"\s]+)"?/);
           if (m) {
@@ -94,7 +113,7 @@ export function extractDependencies(file, allFiles = []) {
           continue;
         }
         if (!inPackages) continue;
-        const m = line.match(/^ {2}['"]?\/?((?:@[^/@\s'"]+\/)?[^/@\s'"]+)[@/](\d[^(:'"\s]*)(?:\([^)]*\))*['"]?:\s*$/);
+        const m = line.match(/^ {2}['"]?\/?((?:@[^/@\s'"]+\/)?[^/@\s'"]+)[@/](\d[^_(:'"\s]*)(?:_[^:'"\s]*)?(?:\([^)]*\))*['"]?:\s*$/);
         if (m && !seen.has(m[1] + '@' + m[2])) {
           seen.add(m[1] + '@' + m[2]);
           add('npm', m[1], m[2]);
@@ -117,16 +136,25 @@ export function extractDependencies(file, allFiles = []) {
         if (m) add('Go', m[1], m[2].replace(/\+incompatible$/, ''));
       }
     } else if (name === 'pom.xml') {
+      const props = new Map();
+      const propsBlock = (content.match(/<properties>([\s\S]*?)<\/properties>/i) || [])[1] || '';
+      for (const p of propsBlock.matchAll(/<([\w.-]+)>([^<]+)<\/\1>/g)) props.set(p[1], p[2].trim());
       for (const m of content.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)) {
         const group = (m[1].match(/<groupId>([^<]+)<\/groupId>/i) || [])[1];
         const artifact = (m[1].match(/<artifactId>([^<]+)<\/artifactId>/i) || [])[1];
-        const version = (m[1].match(/<version>([^<]+)<\/version>/i) || [])[1];
+        let version = (m[1].match(/<version>([^<]+)<\/version>/i) || [])[1];
+        const ref = version && version.trim().match(/^\$\{([\w.-]+)\}$/);
+        if (ref) version = props.get(ref[1]);
         if (group && artifact) add('Maven', `${group.trim()}:${artifact.trim()}`, version, { importName: artifact.trim() });
       }
     } else if (file.ext === '.csproj' || name === 'directory.packages.props') {
       for (const m of content.matchAll(/<(?:PackageReference|PackageVersion)\b[^>]*>/gi)) {
         const inc = (m[0].match(/\bInclude=["']([^"']+)["']/i) || [])[1];
-        const ver = (m[0].match(/\bVersion=["']([^"']+)["']/i) || [])[1];
+        let ver = (m[0].match(/\bVersion=["']([^"']+)["']/i) || [])[1];
+        if (!ver && !m[0].endsWith('/>')) {
+          const rest = content.slice(m.index + m[0].length, m.index + m[0].length + 300).split(/<\/Package(?:Reference|Version)>/i)[0];
+          ver = (rest.match(/<Version>([^<]+)<\/Version>/i) || [])[1];
+        }
         add('NuGet', inc, ver);
       }
     }

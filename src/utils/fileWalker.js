@@ -65,6 +65,8 @@ function matchesGitignore(relPath, fileName, isDir, rules) {
     const clean = cleanRule.replace(/\/$/, '');
 
     if (isDirOnly && !isDir) continue;
+    // Negation is not supported, so a bare wildcard ("*" + "!keep") cannot be honoured safely
+    if (/^[*/]*$/.test(clean) || clean.startsWith('!')) continue;
 
     if (clean.startsWith('*')) {
       const ext = clean.slice(1);
@@ -119,7 +121,8 @@ export function walkDirectory(targetDir, options = {}) {
   }
 
   const allowedFilter = options.onlyFiles ? new Set(options.onlyFiles.map(f => path.normalize(f))) : null;
-  const gitignoreRules = loadGitignoreRules(root);
+  // In untrusted mode the repository does not get to choose what is skipped
+  const gitignoreRules = options.untrusted ? [] : loadGitignoreRules(root);
 
   function recurse(currentPath) {
     let entries;
@@ -139,7 +142,8 @@ export function walkDirectory(targetDir, options = {}) {
             recurse(fullPath);
           }
         }
-      } else if (entry.isFile() || entry.isSymbolicLink()) {
+      } else if (entry.isFile()) {
+        // Symbolic links are never followed: they can point outside the scanned tree
         if (isIgnored(relativePath)) continue;
         const lowerName = entry.name.toLowerCase();
         if (DEFAULT_IGNORED_FILES.has(lowerName)) continue;

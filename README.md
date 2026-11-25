@@ -83,7 +83,7 @@ Traditional SAST scanners (SonarQube, Fortify, Snyk) were built two decades ago 
 
 **AuthWarden** was purpose-built to solve this gap with these tenets:
 
-1. **Focus on Access Control & Logic:** Natively understands Next.js App Router, Server Actions, FastAPI, Express, Django, Go, Java Spring Boot, and C# / ASP.NET Core (.NET 8/9/10). Flags unauthenticated mutating endpoints and database queries lacking tenant ownership filters (`BOLA / IDOR`).
+1. **Focus on Access Control & Logic:** Understands routing in Next.js App Router and Server Actions, Express, Fastify, FastAPI, Java Spring Boot, and C# / ASP.NET Core (controllers and Minimal APIs). Flags unauthenticated mutating endpoints and database queries lacking tenant ownership filters (`BOLA / IDOR`).
 2. **Secret Detection with Active Verification:** Provider-specific patterns plus Shannon entropy for generic tokens. Secrets are redacted in every output format (`sk_live_***`), and `--verify` performs read-only live checks against GitHub, Stripe, OpenAI, Anthropic and Slack.
 3. **Import-Aware Dependency Scanner:** Flags known-vulnerable dependencies and tells you whether the package is actually **imported** somewhere in your source (an import-level check, not call-graph analysis). Works offline from a snapshot of OSV.dev advisories for 31 widely used packages; add `--online` to query the full [OSV.dev](https://osv.dev) database.
 4. **AI Agent & Model Context Protocol (MCP) Guard:** Modern AI developer workflows rely on MCP servers (`mcp.json`) and LLM tools. AuthWarden audits tool declarations for unsandboxed shell execution and root filesystem mounts.
@@ -188,7 +188,11 @@ Audits `Dockerfile`, `docker-compose.yml`, `*.tf`, and Kubernetes manifests for 
               src/admin.js:9 · Express · router.use(auth) at line 3
 ```
 
-Use `--format json` to feed the inventory into a review checklist. "Unprotected" means no auth was detected statically, so intentionally public endpoints (login, health checks) appear there too.
+Use `--format json` to feed the inventory into a review checklist. Each route has one of three states:
+
+- `protected`: an auth identifier was found in the route's middleware, handler, or an upstream guard.
+- `unprotected`: no auth was detected. Intentionally public endpoints (login, health checks) appear here too.
+- `unknown`: middleware is present but not recognised as auth, for example a project-specific `security.appendUserId()`. List such names under `authIdentifiers` in `.authwardenrc.json` and they count as auth.
 
 ---
 
@@ -207,6 +211,8 @@ Use `--format json` to feed the inventory into a review checklist. "Unprotected"
 | **Live Secret Active Verification**| ❌ | ❌ | ✅ | **✅ Built-in (Read-only)** |
 | **AI Agent / MCP Tool Audit** | ❌ | ❌ | ❌ | **✅ Built-in** |
 | **Output Formats** | Proprietary | SARIF/JSON | JSON | **TUI / HTML / SARIF / PR Markdown / JSON** |
+
+The other tools' columns reflect our reading of their public documentation and may be out of date; corrections are welcome.
 
 AuthWarden is narrow on purpose. For deep SAST use Semgrep or Opengrep, for broad secret coverage use Gitleaks or TruffleHog, and for IaC use Trivy or Checkov; AuthWarden is meant to sit next to them and cover authorization.
 
@@ -283,7 +289,7 @@ Block broken authorization routes and exposed secrets from ever reaching remote 
 npx github:manhnv-vnext/authwarden init-hook
 ```
 
-This creates an executable `.git/hooks/pre-commit` hook that automatically validates staged changes before any commit is finalized.
+This creates an executable `.git/hooks/pre-commit` hook that scans the staged content before each commit. An existing hook is never overwritten; the command prints the line to add instead.
 
 ### 4. 🛑 CI Quality Gate Flags
 
@@ -298,6 +304,8 @@ Fine-tune your build pipeline failure thresholds:
 - `--baseline <file>`: Suppress historical known vulnerabilities so CI only blocks newly added issues.
 - `--save-baseline <file>`: Create a baseline snapshot file from the current scan findings.
 - `--watch`: Real-time developer watch mode that re-scans files instantaneously upon save.
+- `--untrusted`: Treat the scanned repository as input only (see [Scanning Code You Do Not Trust](#-scanning-code-you-do-not-trust)).
+- `--staged`: Scan a snapshot of the git index, that is, the content that would be committed, restricted to staged files.
 - `--online`: Query OSV.dev for every pinned dependency version (sends package names and versions only).
 - `--config <file>`: Load configuration options from a custom config file (or defaults to `.authwardenrc.json`).
 
@@ -313,12 +321,13 @@ You can create an optional `.authwardenrc.json` in your repository root to confi
   "ignoreRules": ["SAST-009"],
   "ignorePaths": ["legacy/**", "fixtures/**"],
   "allowSecrets": ["^sk_test_", "EXAMPLE_KEY"],
+  "authIdentifiers": ["appendUserId", "isAccounting"],
   "online": false,
   "baseline": ".authwarden-baseline.json"
 }
 ```
 
-`allowSecrets` takes regular expressions; a secret whose value or source line matches one is not reported.
+`allowSecrets` takes regular expressions; a secret whose value or source line matches one is not reported. `authIdentifiers` lists the names of your own auth middleware or dependencies. `output`, `watch`, `verify` and `online` are only honoured from a file passed with `--config`, not from one discovered in the scanned directory.
 
 ### 6. 🎚️ Confidence Levels
 
@@ -328,15 +337,44 @@ Every finding carries a `confidence` (`HIGH`, `MEDIUM`, `LOW`) and a CWE id, sho
 
 ## 🧪 How Accurate Is It?
 
-AuthWarden matches patterns; it does not parse or type-check your code. To keep that honest, the repository ships a labelled corpus (`test/benchmark/corpus.mjs`): 70 small cases, each marked vulnerable or safe for one rule.
+AuthWarden matches patterns; it does not parse or type-check your code. Treat its output as leads for review, not as proof either way.
+
+**Regression corpus.** The repository ships a labelled corpus (`test/benchmark/corpus.mjs`): 89 small cases, each marked vulnerable or safe for one rule.
 
 ```bash
 npm run bench
 ```
 
-The current result is 35 of 35 vulnerable cases detected and 1 false positive in 35 safe cases (an object lookup on public data, which cannot be told apart statically). These cases are written by the maintainers and the scanner is tuned against them, so read the numbers as a regression guard, not as real-world precision or recall. `npm test` fails if any case changes outcome.
+The current result is 45 of 45 vulnerable cases detected and 1 false positive in 44 safe cases (an object lookup on public data, which cannot be told apart statically). The cases are written by the maintainers and the scanner is tuned against them, so read the numbers as a regression guard, not as real-world precision or recall. `npm test` fails if any case changes outcome.
 
-As a check on code we did not write, the route inventory was compared with a manual read of [OWASP NodeGoat](https://github.com/OWASP/NodeGoat): all 20 routes were found, 12 protected and 8 public, matching the source. Expect misses on frameworks and auth conventions outside the supported list; `authwarden routes` shows the evidence for each decision so you can spot them.
+**Real projects.** Each release is also run against eight public projects (OWASP NodeGoat and Juice Shop, the FastAPI full-stack template, Spring PetClinic, Express, Vercel Commerce, dotnet/eShop, and the RealWorld Express app). What that shows today:
+
+- Route inventory: on NodeGoat (20 routes) and the FastAPI template (23 routes) every route's protected / public status matched a manual read of the source. On Juice Shop 42 of 253 routes come out as `unknown`, because its own middleware names (`security.appendUserId()`) are not recognisable without `authIdentifiers`.
+- Findings: in our own triage of these projects, roughly half of the non-dependency findings needed no action. Typical noise is server actions that are public by design (a shopping cart) and object lookups on public data.
+- Not covered at all: Django, Flask, Go, Ruby and PHP routing. Those projects get secret, dependency, IaC and line-pattern checks only.
+
+**How a route is judged.** A route is `protected` only when an auth identifier is found in real code: comments and the contents of strings are removed first, so a word in a path, a string or a comment never counts. Middleware that is present but not recognised yields `unknown`, and findings on such routes carry `confidence: LOW`.
+
+---
+
+## 🔒 Scanning Code You Do Not Trust
+
+By default AuthWarden behaves like most linters: the repository can tune it through `.authwardenrc.json`, `rules/*.json`, `.gitignore` and inline `authwarden-ignore` comments. That is right for your own code and wrong for a pull request from a fork, where the author controls all of those files.
+
+```bash
+npx github:manhnv-vnext/authwarden scan . --untrusted
+```
+
+`--untrusted` (or `AUTHWARDEN_UNTRUSTED=true`) ignores the repository's config file, custom rules, inline suppressions and `.gitignore`. Pass your own settings with `--config /path/outside/the/repo.json`.
+
+Protections that are always on:
+
+- A config file found inside the scanned directory can never set `output`, `watch`, `verify` or `online`; those are accepted only on the command line or through `--config`.
+- Custom rules run in a worker thread with a time limit, so a catastrophic regex cannot hang the scan. Rule ids and severities are validated.
+- Symbolic links are not followed.
+- Suppressions are reported: the summary states how many findings were hidden by configuration and by inline comments, and an inline marker only works inside a comment.
+- Report text taken from scanned files is escaped in the HTML and Markdown reports.
+- Every secret on a reported line is masked, private key bodies are never printed, and connection strings keep the host but not the password.
 
 ---
 
